@@ -1,329 +1,283 @@
-# PrintFarm Manager
+<div align="center">
 
-Self-hosted Verwaltungssystem für 3D-Druckereien. Kombiniert Drucker-Monitoring,
-Materialverwaltung, Auftragsabwicklung und Buchhaltung in einer Web-App.
+# 🖨️ PrintFarm Manager
 
----
+**Self-hosted Verwaltungssystem für 3D-Druckereien**
 
-## Überblick
+Drucker-Monitoring, Materialverwaltung, Auftragsabwicklung und Buchhaltung – alles in einer Web-App.
 
-PrintFarm Manager ist eine komplette Lösung für den Betrieb einer kleinen
-bis mittleren 3D-Druckerei. Das System läuft im eigenen Netzwerk (Docker Compose),
-bindet Bambu Lab Drucker über die offizielle LAN-API ein und kümmert sich um
-alles drumherum: von der Material-Reservierung über Druckkalkulation bis zum
-Rechnungsversand.
+![Version](https://img.shields.io/badge/version-6.x-blue.svg)
+![License](https://img.shields.io/badge/license-private-lightgrey.svg)
+![Python](https://img.shields.io/badge/python-3.12-green.svg)
+![React](https://img.shields.io/badge/react-18-61dafb.svg)
+![Docker](https://img.shields.io/badge/docker-ready-2496ed.svg)
+![Status](https://img.shields.io/badge/status-aktiv-success.svg)
 
-### Tech-Stack
+[Features](#-features) · [Installation](#-installation) · [Screenshots](#-screenshots) · [Tech-Stack](#-tech-stack) · [Roadmap](#-roadmap)
 
-- **Backend:** Python 3.12 mit FastAPI, SQLAlchemy, PostgreSQL
-- **Frontend:** React 18 mit Vite, Tailwind CSS, Recharts
-- **Deployment:** Docker Compose
-- **Auth:** JWT-basiert mit Rollen (Administrator / Mitarbeiter)
-- **Integrationen:** Bambu Lab MQTT, Tuya Smart Plugs, SMTP (Mailcow getestet)
+</div>
 
 ---
 
-## Features
+## 📋 Über das Projekt
 
-### Dashboard
+PrintFarm Manager ist eine vollständige Self-Hosted-Lösung für den Betrieb einer kleinen bis mittleren 3D-Druckerei. Das System läuft im eigenen Netzwerk via Docker Compose, bindet **Bambu Lab Drucker** über die offizielle LAN-API ein, integriert **Tuya Smart Plugs** für Stromverbrauchsmessung und kümmert sich um alles drumherum – von der Material-Reservierung über Druckkalkulation bis zum automatisierten Rechnungsversand.
 
-Übersichts-Startseite mit Live-Widgets:
-- Druckerstatus auf einen Blick (laufend / idle / Fehler / offline)
-- Niedriger Filamentbestand (unter 500g gesamt)
-- Fällige Wartungen (überfällig + nächste 14 Tage)
-- Aktive Aufträge mit Liefertermin
-- Offene Rechnungen mit Mahnstatus
-- Niedrige Inventarstände
-- Monatsstatistik (Drucke, Materialverbrauch, Umsatz, etc.)
+Entwickelt für **Kleinunternehmer**, **Hobby-Druckereien** und **kleine Werkstätten**, die ihre Druckaufträge professionell verwalten wollen, ohne auf SaaS-Lösungen angewiesen zu sein.
 
-### Druckerverwaltung
-- Mehrere Drucker parallel
-- Bambu Lab Live-Status via MQTT (Temperatur, Fortschritt, Restzeit, aktueller Job)
-- Pro Drucker konfigurierbar: Stundensatz, Strompreis, Durchschnittsverbrauch, Marge
+---
+
+## ✨ Features
+
+### 🎛️ Dashboard
+- Live-Übersicht mit KPIs (Drucker, Aufträge, Umsatz, Erfolgsquote)
+- Aktuelle Drucke mit Live-Fortschritt
+- Niedriger Bestand bei Filament und Inventar auf einen Blick
+- Anstehende Wartungen und überfällige Rechnungen
+- Auto-Refresh alle 30 Sekunden
+
+### 🖨️ Druckerverwaltung
+- Mehrere Bambu Lab Drucker parallel via MQTT
+- Live-Status: Temperatur, Fortschritt, Restzeit, aktueller Job
 - Wartungshistorie mit Erinnerungen
-- Druckkammer-Kamera-Snapshot via RTSP (sofern vom Drucker freigegeben)
+- RTSP-Kamera-Snapshot (P1/X1)
+- Pro Drucker: Stundensatz, Strompreis, Durchschnittsverbrauch, Marge
 
-### Filamentverwaltung
+### 🧵 Filamentverwaltung
 - Bestand pro Rolle mit Restmenge, Charge, Lagerort
-- **Hersteller-Auswahl** aus 25 vorgeschlagenen Marken plus eigene
-- **Mehrfach-Rollen-Gruppierung:** Material + Hersteller + Farbe identisch =
-  ein Typ, einzeln aufklappbar
-- **FIFO-Verbrauch:** Beim Drucken wird automatisch von der Rolle mit der
-  niedrigsten Restmenge zuerst abgebucht
+- **Smart Grouping**: Material + Hersteller + Farbe identisch = ein Typ
+- **FIFO-Verbrauch**: Älteste Rolle wird zuerst geleert
+- 25 vorgeschlagene Hersteller (Bambu Lab, Polymaker, Prusament, Sunlu, ...)
 - Lagerorte (Regale, Trockenboxen)
 
-### Inventar
-- Ersatzteile, Werkzeuge, Verbrauchsmaterial, Zubehör verwalten
-- Bestand mit Mindestmenge und Warnung
+### 📦 Inventar
+- Ersatzteile, Werkzeuge, Verbrauchsmaterial
+- Mindestbestand mit Warnung
 - Anschaffungskosten + Gesamtwert-Berechnung
 - Kategorisiert filterbar
 
-### Kunden und Aufträge
-- Privat- und Geschäftskunden mit eigenen Feldern
-- **Automatische Kundennummer** (K-0001, K-0002, ...)
+### 👥 Kunden & Aufträge
+- Privat- und Geschäftskunden mit automatischer Kundennummer (K-XXXX)
 - Aufträge mit Auftragsnummer, Mengen, Lieferterminen
-- **Druckplatten pro Auftrag:** Beliebig viele Platten pro Auftrag, jede mit
-  eigenem Namen, Druckzeit und Filament-Liste
-- Gesamt-Druckzeit und Gesamt-Material werden automatisch summiert
-- **Filament-Reservierung** über die Gesamtsumme aller Platten
-- Bei Auftragsabschluss: automatische Übernahme in die Druckhistorie
+- **Druckplatten pro Auftrag** – jede mit eigenem Namen, Druckzeit und Filamenten
+- Gesamt-Zeit und Gesamt-Material werden automatisch summiert
+- Auto-Übernahme in Druckhistorie bei Abschluss
 
-### Druckkalkulation
+### 🧮 Druckkalkulation
 - Multi-Color-Drucke mit beliebig vielen Filamenten
-- Pro Druck: Maschinenzeit, Stromkosten, Materialkosten
-- Verkaufspreis mit konfigurierbarer Marge
-- Steh-alone-Kalkulator + Kalkulation direkt im Auftrag
-- MwSt-Anzeige nutzt die Firmen-Einstellung (auch 0% für Kleinunternehmer)
+- Berücksichtigt Maschinenzeit, Stromkosten, Materialkosten
+- Konfigurierbare Marge → Verkaufspreis
+- Steh-alone-Kalkulator oder direkt im Auftrag
 
-### Rechnungssystem
+### 💰 Rechnungssystem
 - Vollständiges Rechnungswesen mit automatischer Nummerierung
-- Konfigurierbares Pattern (z.B. RE-2026-0001)
-- Mehrere Positionen mit MwSt-Aufschlüsselung
-- Skonto und Zahlungsziel
+- Konfigurierbares Pattern (z.B. `RE-2026-0001`)
 - PDF-Generierung mit Firmenlogo, Bankverbindung, Footer
-- Lifecycle: Entwurf → Versendet → Überfällig → 1./2./3. Mahnung → Bezahlt
+- Lifecycle: Entwurf → Versendet → Überfällig → Mahnung → Bezahlt
 - Mahnungen mit Mahngebühr
-- "Rechnung aus Auftrag" Direktfunktion
+- "Rechnung aus Auftrag" mit einem Klick
 - Versand per E-Mail mit PDF-Anhang
+- Kleinunternehmer-Modus (0% MwSt)
 
-### E-Mail-System
+### 📧 E-Mail-Benachrichtigungen
 - SMTP-Konfiguration (Mailcow-kompatibel)
-- Testmail-Funktion
-- Automatische Benachrichtigungen bei Druck-Events
-- Pro Mitarbeiter konfigurierbar (welche Events, welche Drucker)
+- Pro Mitarbeiter individuell konfigurierbar
+- Events: Druck gestartet/50%/fertig/fehlgeschlagen, Drucker-Fehler, Wartung fällig
+- Drucker-Filter
 - Auto-Mail an Kunden bei Druckende mit Foto
 
-### Stromverbrauch
+### ⚡ Stromverbrauch
 - Tuya Smart Plug Integration (LSC/Lidl etc.)
 - Aktuelle Leistung, Tages-/Monatsverbrauch, Gesamtstand
+- Eigener HTTP-Client mit HMAC-SHA256 (kein buggy SDK)
 
-### Auswertungen
-- Statistik: Drucker-Auslastung, Erfolgsquote, Material, Zeit
-- Kosten-Übersicht: Aufschlüsselung aller Drucke
+### 📊 Auswertungen
+- Drucker-Auslastung, Erfolgsquote, Materialverbrauch
+- Kosten-Übersicht mit Aufschlüsselung (Maschine/Strom/Material)
 - Filterbar nach Zeitraum
 - Charts mit Recharts
 
-### Daten-Export
-- **CSV-Export** für alle wichtigen Daten:
-  - Aufträge (filterbar nach Status)
-  - Rechnungen (filterbar nach Status)
-  - Druckhistorie (Zeitraum wählbar)
-  - Kunden
-  - Filamente
-  - Inventar
-- UTF-8 mit BOM (Excel-kompatibel)
-- Semikolon-getrennt (deutsches Excel-Format)
+### 📥 Daten-Export
+- CSV-Export für alle Daten (Aufträge, Rechnungen, Historie, Kunden, Filamente, Inventar)
+- UTF-8 mit BOM (Excel-kompatibel, deutsches Format)
 
-### Backup-System
-- **Automatische tägliche DB-Backups** um 03:00 Uhr
-- Aufräumen alter Backups nach 30 Tagen (konfigurierbar)
-- Manuelle Backups jederzeit erstellen
-- Backups herunterladen für externe Sicherung
-- Bash-Skripte für CLI-Backup und -Restore
+### 💾 Backup-System
+- Automatische tägliche DB-Backups um 03:00 Uhr
+- Manuelle Backups via Web-UI + Download
+- CLI-Skripte für externe Sicherung via Cron
+- Behält die letzten 30 Backups, ältere werden automatisch gelöscht
 
-### Admin-Funktionen
-- Mitarbeiter-Verwaltung mit Rollen
-- Firmendaten zentral pflegen (Logo, Adresse, USt-ID, Bankverbindung)
-- Standard-Werte für Rechnungen (MwSt, Zahlungsziel, Skonto)
-- Backup-Verwaltung
-- SMTP-Konfiguration
+### 📱 Mobile-Optimierung
+- Sidebar als Burger-Menü auf Smartphones
+- Modals als Bottom-Sheets (wie native Apps)
+- Tabellen horizontal scrollbar mit Touch-Support
+- Touch-freundliche Button-Größen
+- Als "Web App" zum Homescreen hinzufügbar
 
 ---
 
-## Menü-Struktur
+## 🛠️ Tech-Stack
 
-```
-Dashboard
-
-Drucker
-├── Übersicht
-├── Wartung
-├── Inventar
-└── Stromverbrauch
-
-Filamente
-├── Übersicht
-└── Lagerorte
-
-Kunden & Aufträge
-├── Kunden
-├── Aufträge
-└── Rechnungen
-
-Druck-Historie
-├── Übersicht
-├── Kosten
-└── Statistik
-
-Kalkulator
-Benachrichtigungen
-Daten-Export
-
-Verwaltung (nur Admin)
-├── Firmendaten
-├── E-Mail-Server
-├── Mitarbeiter
-└── Backups
-```
+| Bereich | Technologie |
+|---------|-------------|
+| **Backend** | Python 3.12, FastAPI, SQLAlchemy, Uvicorn |
+| **Datenbank** | PostgreSQL 16 |
+| **Frontend** | React 18, Vite, Tailwind CSS |
+| **Charts** | Recharts |
+| **Icons** | Lucide React |
+| **PDF-Generierung** | ReportLab |
+| **Auth** | JWT-basiert (python-jose) |
+| **Drucker-API** | Bambu Lab MQTT (paho-mqtt) |
+| **Smart-Plug-API** | Tuya Cloud API v2.0 (eigener HTTP-Client) |
+| **Deployment** | Docker Compose |
 
 ---
 
-## Voraussetzungen
+## 🚀 Installation
 
+### Voraussetzungen
 - Docker und Docker Compose
-- Bambu Lab Drucker im LAN-Modus (für Live-Status und Kamera)
-- Optional: Tuya Smart Plug (für Stromverbrauch)
-- Optional: SMTP-Server (für E-Mails)
+- Bambu Lab Drucker im LAN-Modus
+- Optional: Tuya Smart Plug
+- Optional: SMTP-Server
 
----
-
-## Installation
+### Quick Start
 
 ```bash
-git clone <repo>
-cd printfarm
+# Repository klonen
+git clone https://github.com/bluezocker/PrintFarm-Manager.git
+cd PrintFarm-Manager
+
+# Umgebungsvariablen anpassen
+cp .env.example .env
+nano .env
+# DB_PASSWORD setzen
+# SECRET_KEY mit `openssl rand -hex 32` generieren
+# Optional: TUYA_ACCESS_ID, TUYA_ACCESS_SECRET
+
+# Bauen und starten
 sudo docker compose up -d --build
 ```
 
-Default-Login: `admin / admin` (sofort ändern!)
+### Erster Login
+- **URL:** `http://<server-ip>:3000`
+- **User:** `admin`
+- **Passwort:** `admin` ← **SOFORT ÄNDERN!**
 
-Erreichbar unter `http://localhost:8080` (oder konfigurierte Domain).
+### Erste Schritte
+1. **Firmendaten** ausfüllen (Verwaltung → Firmendaten)
+2. **Standard-MwSt** setzen (Kleinunternehmer: 0%)
+3. **SMTP-Server** konfigurieren (Verwaltung → E-Mail-Server)
+4. **Drucker** anlegen (Drucker → Übersicht → Neu)
 
----
-
-## Backup-Skripte (CLI)
-
-Zwei Skripte für manuelles Backup/Restore liegen im Repo-Root:
-
-### Backup
-```bash
-./backup.sh                  # Backup nach ./backups/
-./backup.sh /pfad/zu/backup  # Anderer Pfad
-```
-
-Erstellt ein `.tar.gz` mit DB-Dump + uploads/-Verzeichnis. Behält die letzten
-30 Backups automatisch.
-
-### Cron-Job für tägliches Backup
-```bash
-crontab -e
-# Dann hinzufügen:
-0 3 * * * cd /opt/printfarm && ./backup.sh >> /var/log/printfarm-backup.log 2>&1
-```
-
-### Restore
-```bash
-./restore.sh ./backups/printfarm_20260515_030000.tar.gz
-```
-
-**Hinweis:** Das automatische Backup über die Web-App läuft sowieso täglich um 03:00 Uhr.
-Die CLI-Skripte sind als zusätzliche Option für externe Sicherung gedacht.
+Detaillierte Anleitung: siehe [INSTALLATION.md](INSTALLATION.md)
 
 ---
 
-## Hinweise
+## 📸 Screenshots
+
+> **Hinweis:** Screenshots werden noch ergänzt. Bei Interesse: einfach selbst aufsetzen und ansehen 😊
+
+Geplante Screenshots:
+- Dashboard mit Live-Widgets
+- Druckerverwaltung mit Live-Status
+- Filament-Übersicht mit Gruppierung
+- Auftrag mit Druckplatten
+- Rechnung mit PDF-Vorschau
+- Mobile-Ansicht
+
+---
+
+## 📂 Projektstruktur
+
+```
+printfarm/
+├── backend/                    # FastAPI Backend
+│   ├── app/
+│   │   ├── api/                # API-Endpoints (Drucker, Filament, Aufträge, ...)
+│   │   ├── models/             # SQLAlchemy-Modelle
+│   │   ├── services/           # Business-Logik (Bambu, Tuya, Mail, PDF, ...)
+│   │   ├── core/               # Auth, DB, Config
+│   │   └── main.py
+│   ├── Dockerfile
+│   └── requirements.txt
+├── frontend/                   # React Frontend
+│   ├── src/
+│   │   ├── pages/              # Seiten (Dashboard, Drucker, Aufträge, ...)
+│   │   ├── components/         # Layout, Modal, ProtectedRoute
+│   │   ├── services/           # API-Client, Auth-Context
+│   │   └── App.jsx
+│   ├── Dockerfile
+│   └── package.json
+├── docker-compose.yml
+├── backup.sh                   # CLI-Backup-Skript
+├── restore.sh                  # CLI-Restore-Skript
+├── .env.example
+├── INSTALLATION.md             # Detaillierte Install-Anleitung
+└── README.md
+```
+
+---
+
+## 🗺️ Roadmap
+
+Mögliche Erweiterungen für künftige Versionen:
+
+- [ ] Mehrsprachigkeit (EN/DE umschaltbar)
+- [ ] OctoPrint-Integration (zusätzlich zu Bambu Lab)
+- [ ] Bestell-System für Endkunden (Kunden laden STL hoch + Live-Preis)
+- [ ] Kalenderansicht für Aufträge mit Drag&Drop
+- [ ] PWA mit Offline-Support und Push-Notifications
+- [ ] 2FA für Login
+- [ ] Erweiterte Statistiken (Profitabilität pro Kunde, Material-Trends)
+- [ ] Etiketten-Druck (für Aufträge mit QR-Code)
+
+---
+
+## 🤝 Beitragen
+
+Dies ist primär ein privates Projekt für den eigenen Bedarf. Bei Interesse an Mitarbeit oder Bug-Reports gerne ein Issue eröffnen.
+
+---
+
+## 📝 Hinweise zu Drittanbietern
 
 ### Bambu Lab
-Der LAN-Modus muss aktiv sein. Access Code am Druckerdisplay unter
-Einstellungen → WLAN → LAN Mode. Seriennummer am Aufkleber.
+LAN-Modus muss am Drucker aktiv sein. Access Code unter:  
+Einstellungen → WLAN → LAN Mode.
 
 ### Tuya Smart Plugs
-Tuya IoT Developer Konto nötig (kostenlos für Eigennutzung). Cloud-Endpoint
-nach Region wählen (EU: `https://openapi.tuyaeu.com`).
-
-Achtung: Das Trial-Abo läuft alle 6 Monate aus, einfach im Tuya-Portal Verlängerung
-beantragen.
+- Tuya IoT Developer Account erforderlich (kostenlos für Eigennutzung)
+- Trial-Abo läuft alle 6 Monate aus → einfach verlängern
+- Cloud-Endpoint nach Region wählen (EU: `https://openapi.tuyaeu.com`)
+- Aktuell genutzte API: **v2.0 cloud/thing** (mit Fallback auf v1.0)
 
 ### Mailcow / SMTP
-- Eigene Mailbox in Mailcow erstellen
-- Username = volle Mailadresse
-- Port 587 mit STARTTLS (Standard)
-- Absender muss mit Login-User übereinstimmen oder Sender-Alias konfigurieren
-
-### Bambu Camera
-RTSP-Stream läuft bei P1-Modellen oft nur on-demand. Falls Snapshots nicht
-klappen: Bambu Studio einmal öffnen, dann nochmal versuchen. Bei manchen
-Firmware-Versionen ist Liveview komplett blockiert.
-
-### Druckplatten in Aufträgen
-Jeder Auftrag kann in mehrere Druckplatten aufgeteilt werden. Pro Platte:
-- Name (z.B. "Platte 1: Gehäuse")
-- Druckzeit
-- Filament-Liste mit Gramm-Mengen
-
-Gesamt-Zeit und Gesamt-Material werden automatisch summiert.
-Beispiel: Eine Vase mit 3 Platten:
-- Platte 1: Boden (5h, 200g PLA Schwarz)
-- Platte 2: Deckel (2h, 80g PLA Gold)
-- Platte 3: Standfuß (1.5h, 80g PETG Klar)
-
-Gesamt: 8.5h, 360g.
+- Eigene Mailbox erstellen
+- Username = volle E-Mail-Adresse
+- Port 587 mit STARTTLS
+- Absender muss mit Login-User übereinstimmen
 
 ---
 
-## Changelog
+## ⚠️ Bekannte Einschränkungen
 
-### Version 6.x - Komplett-Paket
-
-- Dashboard mit Live-Widgets
-- CSV-Export für alle wichtigen Daten
-- Automatisches Backup-System (täglich 03:00, 30 Tage)
-- CLI-Skripte für Backup/Restore
-- MwSt-Default nutzt Firmen-Einstellung (0% für Kleinunternehmer möglich)
-- Diverse 0%-Fixes (Auftrags-MwSt, Standard-Werte)
-
-### Version 5.x - Druckplatten + Filament-Refactor
-
-- **Druckplatten in Aufträgen** - jeder Auftrag kann in mehrere Platten aufgeteilt werden
-- Jede Platte hat eigenen Namen, Druckzeit und Filament-Liste
-- Automatische Aggregation von Zeit und Material
-- Filament-Mehrfachrollen mit Gruppierung
-- FIFO-Verbrauchslogik
-- Hersteller-Dropdown mit 25 Marken
-- Inventar-Modul
-- Hierarchisches Menü mit Untergruppen
-- Bambu-Kamera-Snapshot (experimentell)
-- Auto-Übernahme in Druckhistorie bei Status "completed"
-- Kundennummern (K-XXXX)
-
-### Version 4.x - Rechnungen + E-Mail
-
-- Vollständiges Rechnungssystem mit PDF
-- SMTP-Konfiguration (Mailcow-kompatibel)
-- Status-Lifecycle inkl. Mahnungen
-- Benachrichtigungen pro Mitarbeiter
-- Hintergrund-Worker für Druckerstatus-Polling
-
-### Version 3.x - Multi-Color
-
-- Multi-Color-Drucke mit beliebig vielen Filamenten
-- Druckhistorie speichert alle verwendeten Filamente
-- Auftrags-Kalkulation auch Multi-Color-fähig
-
-### Version 2.x - Druckkalkulation
-
-- Druckkostenrechner mit Maschinenzeit, Strom, Material
-- Pro Drucker eigene Stundensätze
-- Konfigurierbare Marge
-
-### Version 1.0 - Initial Release
-
-- User-Verwaltung mit JWT-Auth
-- Druckerverwaltung mit Bambu MQTT
-- Filament-Bestand mit Lagerorten
-- Kunden- und Auftragsverwaltung
-- Druckhistorie
-- Tuya Smart Plug Integration
-- Wartungshistorie
-- Firmendaten
+- **Bambu P1 Camera:** Firmware blockiert RTSP-Stream oft → Snapshots nicht zuverlässig
+- **Mehrere parallele Aufträge:** Kunden-Mail-Matching über Job-Name kann mehrdeutig sein
+- **Tuya Trial:** Abo muss alle 6 Monate manuell verlängert werden
 
 ---
 
-## Bekannte Einschränkungen
+## 📄 Lizenz
 
-- **Bambu Camera:** Funktioniert nicht zuverlässig auf P1-Modellen wegen
-  Firmware-Restriktion (RTSP läuft nur on-demand)
-- **Mehrere parallele Aufträge:** Bei automatischer Kundenbenachrichtigung
-  wird Auftrag über Job-Name gematched, bei mehreren gleichzeitigen Drucken
-  nicht immer eindeutig
-- **Tuya Trial:** Das kostenlose IoT-Core-Abo läuft alle 6 Monate aus
+Privates Projekt – keine offene Lizenz. Eigene Anpassungen jederzeit möglich, der gesamte Quellcode ist einsehbar.
+
+---
+
+<div align="center">
+
+**Made with ❤️ for 3D-Print enthusiasts**
+
+[⬆ nach oben](#-printfarm-manager)
+
+</div>
