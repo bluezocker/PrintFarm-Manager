@@ -182,6 +182,9 @@ Geplante Screenshots:
 - Dashboard mit Live-Widgets
 - Druckerverwaltung mit Live-Status
 - Filament-Übersicht mit Gruppierung
+
+- ![Filaments](docs/images/filaments.png)
+
 - Auftrag mit Druckplatten
 - Rechnung mit PDF-Vorschau
 - Mobile-Ansicht
