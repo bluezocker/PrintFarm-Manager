@@ -1,0 +1,61 @@
+version: '3.9'
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: printfarm-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: printfarm
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme_in_production}
+      POSTGRES_DB: printfarm
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U printfarm"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: printfarm-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://printfarm:${DB_PASSWORD:-changeme_in_production}@db:5432/printfarm
+      SECRET_KEY: ${SECRET_KEY:-please_change_this_secret_key_to_something_random}
+      ACCESS_TOKEN_EXPIRE_MINUTES: 480
+      # Bambu Lab Cloud (optional)
+      BAMBU_CLOUD_EMAIL: ${BAMBU_CLOUD_EMAIL:-}
+      BAMBU_CLOUD_PASSWORD: ${BAMBU_CLOUD_PASSWORD:-}
+      # Tuya Cloud API (optional)
+      TUYA_ACCESS_ID: ${TUYA_ACCESS_ID:-}
+      TUYA_ACCESS_SECRET: ${TUYA_ACCESS_SECRET:-}
+      TUYA_API_ENDPOINT: ${TUYA_API_ENDPOINT:-https://openapi.tuyaeu.com}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - uploads:/app/uploads
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: printfarm-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "3000:80"
+
+volumes:
+  db_data:
+  uploads:

@@ -1,0 +1,196 @@
+"""Druckerverwaltung mit Bambu-Live-Status und Wartungseinträgen."""
+from datetime import datetime
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+
+from app.core.database import get_db
+from app.core.security import get_current_user
+from app.models import Printer, Maintenance, User
+from app.schemas import (
+    PrinterCreate, PrinterRead, PrinterUpdate,
+    MaintenanceCreate, MaintenanceRead,
+)
+from app.services.bambu_service import bambu_manager
+from app.services.camera_service import camera_manager
+
+router = APIRouter(prefix="/api/printers", tags=["printers"])
+
+
+@router.get("", response_model=list[PrinterRead])
+def list_printers(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    return db.query(Printer).order_by(Printer.name).all()
+
+
+@router.post("", response_model=PrinterRead, status_code=201)
+def create_printer(
+    data: PrinterCreate,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    printer = Printer(**data.model_dump())
+    db.add(printer)
+    db.commit()
+    db.refresh(printer)
+
+    # Bei vorhandenen Bambu-Daten direkt verbinden
+    if printer.bambu_ip and printer.bambu_access_code and printer.bambu_serial:
+        bambu_manager.register(
+            printer.id, printer.bambu_ip, printer.bambu_access_code, printer.bambu_serial
+        )
+    if printer.bambu_ip and printer.bambu_access_code:
+        camera_manager.register(printer.id, printer.bambu_ip, printer.bambu_access_code)
+    return printer
+
+
+@router.get("/{printer_id}", response_model=PrinterRead)
+def get_printer(printer_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    printer = db.query(Printer).filter(Printer.id == printer_id).first()
+    if not printer:
+        raise HTTPException(404, "Drucker nicht gefunden")
+    return printer
+
+
+@router.patch("/{printer_id}", response_model=PrinterRead)
+def update_printer(
+    printer_id: int,
+    data: PrinterUpdate,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    printer = db.query(Printer).filter(Printer.id == printer_id).first()
+    if not printer:
+        raise HTTPException(404, "Drucker nicht gefunden")
+    for k, v in data.model_dump(exclude_unset=True).items():
+        setattr(printer, k, v)
+    db.commit()
+    db.refresh(printer)
+
+    # Bambu-Verbindung neu aufbauen falls Daten geändert
+    if printer.bambu_ip and printer.bambu_access_code and printer.bambu_serial:
+        bambu_manager.register(
+            printer.id, printer.bambu_ip, printer.bambu_access_code, printer.bambu_serial
+        )
+    if printer.bambu_ip and printer.bambu_access_code:
+        camera_manager.register(printer.id, printer.bambu_ip, printer.bambu_access_code)
+    return printer
+
+
+@router.delete("/{printer_id}", status_code=204)
+def delete_printer(
+    printer_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)
+):
+    printer = db.query(Printer).filter(Printer.id == printer_id).first()
+    if not printer:
+        raise HTTPException(404, "Nicht gefunden")
+    bambu_manager.unregister(printer_id)
+    camera_manager.unregister(printer_id)
+    db.delete(printer)
+    db.commit()
+
+
+# ============ Live-Status via Bambu MQTT ============
+
+@router.get("/{printer_id}/status")
+def get_live_status(
+    printer_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    printer = db.query(Printer).filter(Printer.id == printer_id).first()
+    if not printer:
+        raise HTTPException(404, "Drucker nicht gefunden")
+
+    client = bambu_manager.get(printer_id)
+    if not client and printer.bambu_ip and printer.bambu_access_code and printer.bambu_serial:
+        client = bambu_manager.register(
+            printer.id, printer.bambu_ip, printer.bambu_access_code, printer.bambu_serial
+        )
+
+    if not client:
+        return {"connected": False, "error": "Bambu-Daten nicht konfiguriert"}
+
+    status = client.get_status_summary()
+
+    # In DB persistieren
+    if status.get("status"):
+        printer.status = status["status"]
+        printer.current_job_name = status.get("current_job_name")
+        printer.progress = status.get("progress") or 0.0
+        printer.nozzle_temp = status.get("nozzle_temp")
+        printer.bed_temp = status.get("bed_temp")
+        printer.remaining_time = status.get("remaining_time")
+        printer.last_seen = datetime.utcnow()
+        db.commit()
+
+    return status
+
+
+@router.post("/{printer_id}/pause")
+def pause_print(
+    printer_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)
+):
+    client = bambu_manager.get(printer_id)
+    if not client:
+        raise HTTPException(400, "Drucker nicht verbunden")
+    return {"success": client.pause_print()}
+
+
+@router.post("/{printer_id}/resume")
+def resume_print(
+    printer_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)
+):
+    client = bambu_manager.get(printer_id)
+    if not client:
+        raise HTTPException(400, "Drucker nicht verbunden")
+    return {"success": client.resume_print()}
+
+
+@router.post("/{printer_id}/stop")
+def stop_print(
+    printer_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)
+):
+    client = bambu_manager.get(printer_id)
+    if not client:
+        raise HTTPException(400, "Drucker nicht verbunden")
+    return {"success": client.stop_print()}
+
+
+# ============ Wartungseinträge ============
+
+@router.get("/{printer_id}/maintenances", response_model=list[MaintenanceRead])
+def list_maintenances(
+    printer_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)
+):
+    return (
+        db.query(Maintenance)
+        .filter(Maintenance.printer_id == printer_id)
+        .order_by(Maintenance.date.desc())
+        .all()
+    )
+
+
+@router.post("/{printer_id}/maintenances", response_model=MaintenanceRead, status_code=201)
+def add_maintenance(
+    printer_id: int,
+    data: MaintenanceCreate,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    if not db.query(Printer).filter(Printer.id == printer_id).first():
+        raise HTTPException(404, "Drucker nicht gefunden")
+    m = Maintenance(printer_id=printer_id, **data.model_dump())
+    db.add(m)
+    db.commit()
+    db.refresh(m)
+    return m
+
+
+@router.delete("/maintenances/{maintenance_id}", status_code=204)
+def delete_maintenance(
+    maintenance_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)
+):
+    m = db.query(Maintenance).filter(Maintenance.id == maintenance_id).first()
+    if not m:
+        raise HTTPException(404, "Nicht gefunden")
+    db.delete(m)
+    db.commit()
