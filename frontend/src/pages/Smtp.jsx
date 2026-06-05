@@ -104,8 +104,11 @@ export default function Smtp() {
             </div>
             <div>
               <label className="label">Absender-Name</label>
-              <input className="input" placeholder="PrintFarm"
+              <input className="input" placeholder="Wird aus Firmendaten übernommen"
                 value={f('from_name')} onChange={(e) => set('from_name', e.target.value)} />
+              <p className="text-xs text-gray-500 mt-1">
+                Leer lassen, um den Firmennamen aus den Firmendaten zu verwenden
+              </p>
             </div>
             <div className="col-span-2">
               <label className="label">Reply-To (optional)</label>

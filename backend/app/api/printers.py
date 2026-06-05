@@ -21,6 +21,36 @@ def list_printers(db: Session = Depends(get_db), _: User = Depends(get_current_u
     return db.query(Printer).order_by(Printer.name).all()
 
 
+def _register_printer_mqtt(printer: Printer, db: Session):
+    """Verbindet einen Drucker je nach Modus mit LAN oder Cloud.
+
+    Cloud-Modus liest die Account-Daten aus IntegrationSettings (Verwaltung → Integrationen).
+    """
+    if not printer.bambu_serial:
+        return  # ohne Serial geht gar nichts
+
+    if printer.connection_mode == "cloud":
+        # Cloud-Account aus Integrationen laden
+        from app.models import IntegrationSettings
+        s = db.query(IntegrationSettings).first()
+        if not s or not s.bambu_enabled or not s.bambu_cloud_email or not s.bambu_cloud_password:
+            # Keine Cloud-Daten konfiguriert - nichts tun, User muss erst in Integrationen pflegen
+            return
+        bambu_manager.register_cloud(
+            printer.id, printer.bambu_serial,
+            s.bambu_cloud_email, s.bambu_cloud_password,
+        )
+        # Im Cloud-Modus keine LAN-Kamera
+        return
+
+    # LAN-Modus (Default)
+    if printer.bambu_ip and printer.bambu_access_code:
+        bambu_manager.register_lan(
+            printer.id, printer.bambu_ip, printer.bambu_access_code, printer.bambu_serial,
+        )
+        camera_manager.register(printer.id, printer.bambu_ip, printer.bambu_access_code)
+
+
 @router.post("", response_model=PrinterRead, status_code=201)
 def create_printer(
     data: PrinterCreate,
@@ -31,14 +61,7 @@ def create_printer(
     db.add(printer)
     db.commit()
     db.refresh(printer)
-
-    # Bei vorhandenen Bambu-Daten direkt verbinden
-    if printer.bambu_ip and printer.bambu_access_code and printer.bambu_serial:
-        bambu_manager.register(
-            printer.id, printer.bambu_ip, printer.bambu_access_code, printer.bambu_serial
-        )
-    if printer.bambu_ip and printer.bambu_access_code:
-        camera_manager.register(printer.id, printer.bambu_ip, printer.bambu_access_code)
+    _register_printer_mqtt(printer, db)
     return printer
 
 
@@ -64,14 +87,7 @@ def update_printer(
         setattr(printer, k, v)
     db.commit()
     db.refresh(printer)
-
-    # Bambu-Verbindung neu aufbauen falls Daten geändert
-    if printer.bambu_ip and printer.bambu_access_code and printer.bambu_serial:
-        bambu_manager.register(
-            printer.id, printer.bambu_ip, printer.bambu_access_code, printer.bambu_serial
-        )
-    if printer.bambu_ip and printer.bambu_access_code:
-        camera_manager.register(printer.id, printer.bambu_ip, printer.bambu_access_code)
+    _register_printer_mqtt(printer, db)
     return printer
 
 
@@ -101,10 +117,10 @@ def get_live_status(
         raise HTTPException(404, "Drucker nicht gefunden")
 
     client = bambu_manager.get(printer_id)
-    if not client and printer.bambu_ip and printer.bambu_access_code and printer.bambu_serial:
-        client = bambu_manager.register(
-            printer.id, printer.bambu_ip, printer.bambu_access_code, printer.bambu_serial
-        )
+    if not client and printer.bambu_serial:
+        # Lazy-Register beim ersten Status-Abruf
+        _register_printer_mqtt(printer, db)
+        client = bambu_manager.get(printer_id)
 
     if not client:
         return {"connected": False, "error": "Bambu-Daten nicht konfiguriert"}

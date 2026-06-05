@@ -1,18 +1,25 @@
 """
 Bambu Lab Drucker-Integration über MQTT.
 
-Funktioniert im LAN-Modus: Der Drucker muss in den 'LAN Only Mode' geschaltet sein
-(Einstellungen -> Netzwerk auf dem Druckerdisplay).
+Unterstützt zwei Verbindungsmodi:
 
-Benötigt pro Drucker:
-- IP-Adresse im lokalen Netzwerk
-- LAN Access Code (vom Druckerdisplay: Einstellungen > WLAN > Show Detail)
-- Serial Number (auch auf dem Display)
+1. LAN-MODUS (lokal, ohne Cloud):
+   - Drucker muss in den 'LAN Only Mode' geschaltet sein
+   - Benötigt: IP-Adresse, LAN Access Code, Serial Number
+   - MQTT-Broker: der Drucker selbst (Port 8883)
 
-MQTT-Topic-Struktur:
-- device/{serial}/report -> Status-Updates vom Drucker
+2. CLOUD-MODUS (über Bambu Cloud):
+   - Drucker hängt in der Bambu-Cloud (Standard, kein LAN Only nötig)
+   - Benötigt: nur Serial Number (Account-Daten global)
+   - Bambu-Account in Verwaltung → Integrationen pflegen
+   - MQTT-Broker: us.mqtt.bambulab.com (Port 8883)
+   - Vorteil: Funktioniert auch wenn man nicht im LAN ist
+
+MQTT-Topic-Struktur (beide Modi):
+- device/{serial}/report  -> Status-Updates vom Drucker
 - device/{serial}/request -> Befehle an den Drucker
 """
+import base64
 import json
 import ssl
 import logging
@@ -20,17 +27,293 @@ import threading
 from datetime import datetime
 from typing import Dict, Optional
 import paho.mqtt.client as mqtt
+import requests
 
 logger = logging.getLogger(__name__)
 
 
-class BambuPrinterClient:
-    """Hält eine MQTT-Verbindung zu einem einzelnen Bambu-Drucker."""
+# Bambu Cloud API
+# Bambu nutzt einen globalen Login-Endpoint, danach verbindet man sich mit
+# einem regionalen MQTT-Broker. EU-Accounts müssen den EU-Broker verwenden.
+BAMBU_API_BASE_GLOBAL = "https://api.bambulab.com"
+BAMBU_API_BASE_CHINA = "https://api.bambulab.cn"
 
-    def __init__(self, ip: str, access_code: str, serial: str):
+# Verfügbare MQTT-Broker - die richtige Region wird beim Login-Response gewählt
+BAMBU_MQTT_BROKERS = {
+    "default": "us.mqtt.bambulab.com",
+    "us": "us.mqtt.bambulab.com",
+    "eu": "eu.mqtt.bambulab.com",
+    "china": "cn.mqtt.bambulab.com",
+}
+BAMBU_CLOUD_MQTT_PORT = 8883
+
+
+def _bambu_cloud_login(email: str, password: str) -> Optional[Dict]:
+    """Versucht direkten Login mit Email+Passwort.
+
+    Returns:
+    - {"token": ..., "user_id": ..., "mqtt_host": ...} bei Erfolg
+    - {"needs_verification": True, "method": "email"|"tfa"} wenn Code nötig
+    - None bei Fehler
+    """
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "bambu_network_agent/01.09.05.01",
+    }
+    payload = {
+        "account": email,
+        "password": password,
+        "apiError": "",
+    }
+    for api_base in (BAMBU_API_BASE_GLOBAL, BAMBU_API_BASE_CHINA):
+        try:
+            url = f"{api_base}/v1/user-service/user/login"
+            r = requests.post(url, json=payload, headers=headers, timeout=15)
+
+            if r.status_code != 200:
+                logger.warning(
+                    f"Bambu Cloud Login ({api_base}): HTTP {r.status_code} - {r.text[:200]}"
+                )
+                continue
+
+            data = r.json()
+            login_type = data.get("loginType")
+            token = data.get("accessToken")
+
+            # Verifizierungscode nötig - Code-Mail anfordern
+            if login_type in ("verifyCode", "tfa") and not token:
+                logger.info(f"Bambu Cloud: Verifizierung nötig (loginType={login_type})")
+                # Code per Email anfordern (außer bei TFA, das wäre die Authenticator-App)
+                if login_type == "verifyCode":
+                    _bambu_request_email_code(email)
+                return {"needs_verification": True, "method": login_type}
+
+            if not token:
+                logger.error(f"Bambu Cloud Login: kein Token. Response: {str(data)[:300]}")
+                continue
+
+            return _parse_token_response(data)
+        except Exception as e:
+            logger.warning(f"Bambu Cloud Login ({api_base}) Exception: {e}")
+            continue
+
+    return None
+
+
+def _bambu_login_with_code(email: str, code: str) -> Optional[Dict]:
+    """Zweiter Login-Schritt: mit Email + Code statt Email + Passwort.
+
+    Bambu's API ist hier inkonsistent - wir probieren mehrere Payload-Varianten.
+    Returns: {"token": ..., "user_id": ..., "mqtt_host": ...} oder None.
+    """
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "bambu_network_agent/01.09.05.01",
+    }
+
+    # Mehrere Payload-Varianten probieren - Bambu hat das schon mal geändert
+    payloads = [
+        # Variante 1: code als eigenes Feld (häufigste)
+        {"account": email, "code": code, "apiError": ""},
+        # Variante 2: verifyCode statt code
+        {"account": email, "verifyCode": code, "apiError": ""},
+        # Variante 3: explicit loginType
+        {"account": email, "code": code, "loginType": "verifyCode", "apiError": ""},
+        # Variante 4: password-Feld mit dem Code (manche Clients tun das so)
+        {"account": email, "password": code, "loginType": "verifyCode", "apiError": ""},
+    ]
+
+    for api_base in (BAMBU_API_BASE_GLOBAL, BAMBU_API_BASE_CHINA):
+        url = f"{api_base}/v1/user-service/user/login"
+        for i, payload in enumerate(payloads, 1):
+            try:
+                logger.info(
+                    f"Bambu Code-Login Versuch {i} ({api_base}): "
+                    f"keys={list(payload.keys())}"
+                )
+                r = requests.post(url, json=payload, headers=headers, timeout=15)
+                if r.status_code != 200:
+                    logger.warning(
+                        f"Bambu Code-Login V{i}: HTTP {r.status_code} - {r.text[:200]}"
+                    )
+                    continue
+                data = r.json()
+                logger.info(
+                    f"Bambu Code-Login V{i} Response: "
+                    f"keys={list(data.keys())}, "
+                    f"loginType={data.get('loginType')}, "
+                    f"hasToken={bool(data.get('accessToken'))}, "
+                    f"code={data.get('code')}, "
+                    f"error={data.get('error')}"
+                )
+                if data.get("accessToken"):
+                    return _parse_token_response(data)
+            except Exception as e:
+                logger.warning(f"Bambu Code-Login V{i} Exception: {e}")
+                continue
+
+    logger.error(f"Bambu Code-Login: alle Varianten fehlgeschlagen")
+    return None
+
+
+def _bambu_request_email_code(email: str) -> bool:
+    """Fordert von Bambu einen Verification-Code per Email an.
+
+    Probiert mehrere Type-Varianten weil Bambu hier auch inkonsistent ist.
+    """
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "bambu_network_agent/01.09.05.01",
+    }
+    type_variants = ["codeLogin", "code_login", "login"]
+
+    for type_val in type_variants:
+        try:
+            url = f"{BAMBU_API_BASE_GLOBAL}/v1/user-service/user/sendemail/code"
+            r = requests.post(
+                url,
+                json={"email": email, "type": type_val},
+                headers=headers,
+                timeout=15,
+            )
+            if r.status_code == 200:
+                logger.info(
+                    f"Bambu Cloud: Code-Mail an {email} (type={type_val})"
+                )
+                return True
+            logger.warning(
+                f"Bambu Code-Mail (type={type_val}): HTTP {r.status_code} - {r.text[:200]}"
+            )
+        except Exception as e:
+            logger.error(f"Bambu Code-Mail (type={type_val}) Exception: {e}")
+    return False
+
+
+def _parse_token_response(data: dict) -> Optional[Dict]:
+    """Extrahiert User-ID und Region aus dem Login-Response.
+
+    Bambu liefert die User-ID auf 3 verschiedene Weisen, je nach API-Version:
+    1. Im JWT-Token als Claim
+    2. Direkt im Response-Body
+    3. Garnicht - dann muss /my/profile abgefragt werden
+    """
+    token = data.get("accessToken")
+    if not token:
+        logger.error("Bambu _parse_token_response: kein accessToken im Response")
+        return None
+
+    user_id = None
+
+    # Strategie 1: JWT parsen
+    try:
+        parts = token.split(".")
+        logger.info(f"Bambu JWT parts count: {len(parts)}, token len: {len(token)}")
+        if len(parts) >= 2:
+            payload_b64 = parts[1] + "=" * (-len(parts[1]) % 4)
+            decoded = base64.urlsafe_b64decode(payload_b64)
+            logger.info(f"Bambu JWT decoded bytes: {len(decoded)}, sample: {decoded[:100]}")
+            jwt_payload = json.loads(decoded)
+            logger.info(
+                f"Bambu JWT-Payload-Keys: {list(jwt_payload.keys())}, "
+                f"alle Values: {jwt_payload}"
+            )
+            user_id = (
+                jwt_payload.get("username")
+                or jwt_payload.get("uid")
+                or jwt_payload.get("sub")
+                or jwt_payload.get("userId")
+                or jwt_payload.get("id")
+                or jwt_payload.get("preUid")
+                or jwt_payload.get("preUsername")
+            )
+            if user_id:
+                logger.info(f"Bambu User-ID aus JWT: {user_id}")
+    except Exception as e:
+        logger.error(f"JWT-Parse-Exception: {type(e).__name__}: {e}", exc_info=True)
+
+    # Strategie 2: User-ID aus Response-Body
+    if not user_id:
+        user_id = data.get("uid") or data.get("userId") or data.get("id")
+        if user_id:
+            logger.info(f"Bambu User-ID aus Response-Body: {user_id}")
+
+    # Strategie 3: /my/profile API anfragen
+    if not user_id:
+        logger.info("Bambu: User-ID weder im JWT noch im Body - frage /my/profile ab")
+        try:
+            for api_base in (BAMBU_API_BASE_GLOBAL, BAMBU_API_BASE_CHINA):
+                r = requests.get(
+                    f"{api_base}/v1/user-service/my/profile",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "User-Agent": "bambu_network_agent/01.09.05.01",
+                    },
+                    timeout=10,
+                )
+                logger.info(
+                    f"Bambu /my/profile ({api_base}): "
+                    f"HTTP {r.status_code}, body: {r.text[:300]}"
+                )
+                if r.status_code == 200:
+                    profile = r.json()
+                    user_id = (
+                        profile.get("uid")
+                        or profile.get("userId")
+                        or profile.get("id")
+                        or profile.get("username")
+                    )
+                    if user_id:
+                        logger.info(f"Bambu User-ID aus /my/profile: {user_id}")
+                        break
+        except Exception as e:
+            logger.error(f"Bambu /my/profile Exception: {e}")
+
+    if not user_id:
+        logger.error(
+            f"Bambu _parse_token_response: keine User-ID gefunden. "
+            f"Response keys: {list(data.keys())}, "
+            f"accessMethod={data.get('accessMethod')}, "
+            f"firstAppLogin={data.get('firstAppLogin')}"
+        )
+        return None
+
+    region = (data.get("region") or data.get("homeRegion") or "default").lower()
+    mqtt_host = BAMBU_MQTT_BROKERS.get(region, BAMBU_MQTT_BROKERS["default"])
+
+    logger.info(f"Bambu Cloud Login erfolgreich (user={user_id}, region={region})")
+    return {"token": token, "user_id": str(user_id), "mqtt_host": mqtt_host}
+
+
+def _bambu_get_cached_token(db) -> Optional[Dict]:
+    """Liefert cached Token aus IntegrationSettings (falls vorhanden + noch gültig)."""
+    from app.models import IntegrationSettings
+    s = db.query(IntegrationSettings).first()
+    if s and s.bambu_cloud_token and s.bambu_cloud_user_id:
+        return {
+            "token": s.bambu_cloud_token,
+            "user_id": s.bambu_cloud_user_id,
+            "mqtt_host": s.bambu_cloud_mqtt_host or BAMBU_MQTT_BROKERS["default"],
+        }
+    return None
+
+
+class BambuPrinterClient:
+    """Hält eine MQTT-Verbindung zu einem einzelnen Bambu-Drucker.
+
+    Modi:
+    - LAN:   ip, access_code, serial werden benötigt
+    - CLOUD: serial + cloud_email + cloud_password werden benötigt
+    """
+
+    def __init__(self, serial: str, mode: str = "lan",
+                 ip: Optional[str] = None, access_code: Optional[str] = None,
+                 cloud_email: Optional[str] = None, cloud_password: Optional[str] = None):
+        self.serial = serial
+        self.mode = mode  # "lan" oder "cloud"
         self.ip = ip
         self.access_code = access_code
-        self.serial = serial
+        self.cloud_email = cloud_email
+        self.cloud_password = cloud_password
         self.client: Optional[mqtt.Client] = None
         self.connected = False
         self.last_status: Dict = {}
@@ -40,9 +323,8 @@ class BambuPrinterClient:
     def _on_connect(self, client, userdata, flags, rc, properties=None):
         if rc == 0:
             self.connected = True
-            logger.info(f"Bambu {self.serial}: verbunden")
+            logger.info(f"Bambu {self.serial}: verbunden ({self.mode})")
             client.subscribe(f"device/{self.serial}/report")
-            # Vollen Status anfordern (vor allem für P1-Serie wichtig - dort kommen sonst nur Deltas)
             self.request_full_status()
         else:
             logger.error(f"Bambu {self.serial}: connect rc={rc}")
@@ -55,7 +337,6 @@ class BambuPrinterClient:
         try:
             payload = json.loads(msg.payload.decode("utf-8"))
             with self._lock:
-                # P1-Serie sendet nur Deltas - daher mergen statt überschreiben
                 if "print" in payload:
                     if "print" not in self.last_status:
                         self.last_status["print"] = {}
@@ -67,15 +348,22 @@ class BambuPrinterClient:
             logger.error(f"Parse-Fehler {self.serial}: {e}")
 
     def connect(self) -> bool:
-        """Stellt MQTT-Verbindung zum Drucker her."""
+        """Stellt MQTT-Verbindung zum Drucker her - je nach Modus LAN oder Cloud."""
+        if self.mode == "cloud":
+            return self._connect_cloud()
+        return self._connect_lan()
+
+    def _connect_lan(self) -> bool:
+        """MQTT direkt zum Drucker via LAN (Port 8883, selbst-signiertes Zert)."""
         try:
+            if not self.ip or not self.access_code:
+                logger.error(f"Bambu {self.serial}: IP/Access-Code fehlen für LAN-Modus")
+                return False
             self.client = mqtt.Client(
                 callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
                 client_id=f"printfarm-{self.serial}",
             )
             self.client.username_pw_set("bblp", self.access_code)
-            # Bambu nutzt selbst-signiertes Zert - daher Verify aus.
-            # Für produktive Sicherheit könnte das CA-Zert eingebunden werden.
             self.client.tls_set(cert_reqs=ssl.CERT_NONE, tls_version=ssl.PROTOCOL_TLS_CLIENT)
             self.client.tls_insecure_set(True)
             self.client.on_connect = self._on_connect
@@ -85,7 +373,54 @@ class BambuPrinterClient:
             self.client.loop_start()
             return True
         except Exception as e:
-            logger.error(f"Bambu {self.serial} connect-Fehler: {e}")
+            logger.error(f"Bambu {self.serial} LAN-connect-Fehler: {e}")
+            return False
+
+    def _connect_cloud(self) -> bool:
+        """MQTT zu Bambu Cloud. Nutzt cached Token wenn vorhanden, sonst Login."""
+        try:
+            from app.core.database import SessionLocal
+            db = SessionLocal()
+            try:
+                auth = _bambu_get_cached_token(db)
+            finally:
+                db.close()
+
+            # Kein gültiger Cache? Dann frischer Login (nur ohne 2FA möglich)
+            if not auth:
+                if not self.cloud_email or not self.cloud_password:
+                    logger.error(
+                        f"Bambu {self.serial}: Kein Cloud-Token. "
+                        f"Bitte in Verwaltung → Integrationen einmal verifizieren."
+                    )
+                    return False
+                result = _bambu_cloud_login(self.cloud_email, self.cloud_password)
+                if not result or result.get("needs_verification"):
+                    logger.error(
+                        f"Bambu {self.serial}: Cloud-Login benötigt Verifizierung. "
+                        f"Bitte in Verwaltung → Integrationen den Code eingeben."
+                    )
+                    return False
+                auth = result
+
+            mqtt_host = auth.get("mqtt_host", BAMBU_MQTT_BROKERS["default"])
+
+            self.client = mqtt.Client(
+                callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
+                client_id=f"printfarm-{self.serial}",
+            )
+            self.client.username_pw_set(f"u_{auth['user_id']}", auth["token"])
+            self.client.tls_set(tls_version=ssl.PROTOCOL_TLS_CLIENT)
+            self.client.on_connect = self._on_connect
+            self.client.on_disconnect = self._on_disconnect
+            self.client.on_message = self._on_message
+
+            logger.info(f"Bambu {self.serial}: verbinde mit Cloud-MQTT {mqtt_host}...")
+            self.client.connect(mqtt_host, BAMBU_CLOUD_MQTT_PORT, 60)
+            self.client.loop_start()
+            return True
+        except Exception as e:
+            logger.error(f"Bambu {self.serial} Cloud-connect-Fehler: {e}")
             return False
 
     def disconnect(self):
@@ -138,19 +473,38 @@ class BambuPrinterClient:
 
 
 class BambuManager:
-    """Singleton-Manager - verwaltet alle Drucker-Clients."""
+    """Singleton-Manager - verwaltet alle Drucker-Clients (LAN und Cloud)."""
 
     def __init__(self):
         self._clients: Dict[int, BambuPrinterClient] = {}
 
-    def register(self, printer_id: int, ip: str, access_code: str, serial: str) -> BambuPrinterClient:
-        """Registriert und verbindet einen Drucker."""
+    def register_lan(self, printer_id: int, ip: str, access_code: str, serial: str) -> BambuPrinterClient:
+        """Registriert einen LAN-Drucker."""
         if printer_id in self._clients:
             self._clients[printer_id].disconnect()
-        client = BambuPrinterClient(ip, access_code, serial)
+        client = BambuPrinterClient(
+            serial=serial, mode="lan", ip=ip, access_code=access_code,
+        )
         client.connect()
         self._clients[printer_id] = client
         return client
+
+    def register_cloud(self, printer_id: int, serial: str, email: str, password: str) -> BambuPrinterClient:
+        """Registriert einen Cloud-Drucker mit globalen Account-Daten."""
+        if printer_id in self._clients:
+            self._clients[printer_id].disconnect()
+        client = BambuPrinterClient(
+            serial=serial, mode="cloud",
+            cloud_email=email, cloud_password=password,
+        )
+        client.connect()
+        self._clients[printer_id] = client
+        return client
+
+    # Backward-Compat
+    def register(self, printer_id: int, ip: str, access_code: str, serial: str) -> BambuPrinterClient:
+        """Alias für register_lan (Backward-Compatibility)."""
+        return self.register_lan(printer_id, ip, access_code, serial)
 
     def unregister(self, printer_id: int):
         if printer_id in self._clients:

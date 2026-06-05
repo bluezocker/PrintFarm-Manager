@@ -1,9 +1,12 @@
 """Kundenverwaltung und Druckaufträge."""
 from datetime import datetime, date as Date
-from fastapi import APIRouter, Depends, HTTPException
+from pathlib import Path
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.config import settings
 from app.core.security import get_current_user
 from app.models import (
     Customer, PrintJob, PrintJobFilament, PrintJobPlate, Filament,
@@ -358,6 +361,16 @@ def update_job(
 
     db.commit()
     db.refresh(j)
+
+    # Email an Kunden bei manuellem Statuswechsel
+    if old_status != j.status:
+        try:
+            from app.services.notifier import notify_customer_on_status_change
+            notify_customer_on_status_change(db, j, j.status)
+        except Exception as e:
+            # Mail-Fehler soll den API-Call nicht abbrechen
+            import logging
+            logging.getLogger(__name__).error(f"Status-Mail Fehler: {e}")
     return j
 
 
@@ -392,3 +405,98 @@ def move_job_to_history(
         j.completion_date = Date.today()
     db.commit()
     return {"history_id": entry.id, "job_status": j.status}
+
+
+# ===================== Druckergebnis-Foto =====================
+
+ALLOWED_PHOTO_EXT = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
+MAX_PHOTO_BYTES = 10 * 1024 * 1024   # 10 MB
+
+
+def _photo_dir() -> Path:
+    """Verzeichnis für Druckergebnis-Fotos. Wird erstellt falls nicht vorhanden."""
+    d = Path(settings.UPLOAD_DIR) / "result_photos"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+@router.post("/jobs/{job_id}/photo")
+async def upload_result_photo(
+    job_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Lädt ein Druckergebnis-Foto hoch. Wird bei der "Fertig"-Mail mitgeschickt."""
+    j = db.query(PrintJob).filter(PrintJob.id == job_id).first()
+    if not j:
+        raise HTTPException(404, "Auftrag nicht gefunden")
+
+    # Datei-Endung prüfen
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in ALLOWED_PHOTO_EXT:
+        raise HTTPException(
+            400,
+            f"Dateityp nicht erlaubt. Erlaubt: {', '.join(sorted(ALLOWED_PHOTO_EXT))}"
+        )
+
+    # Größe prüfen (Stream lesen)
+    content = await file.read()
+    if len(content) > MAX_PHOTO_BYTES:
+        raise HTTPException(400, f"Datei zu groß (max. {MAX_PHOTO_BYTES // 1024 // 1024} MB)")
+
+    # Altes Foto löschen falls vorhanden
+    if j.result_photo_path:
+        old = Path(j.result_photo_path)
+        if old.exists():
+            try:
+                old.unlink()
+            except Exception:
+                pass
+
+    # Neue Datei speichern
+    filename = f"job_{job_id}_{datetime.utcnow():%Y%m%d_%H%M%S}{ext}"
+    target = _photo_dir() / filename
+    target.write_bytes(content)
+
+    j.result_photo_path = str(target)
+    db.commit()
+    db.refresh(j)
+    return {"success": True, "path": str(target), "filename": filename}
+
+
+@router.get("/jobs/{job_id}/photo")
+def get_result_photo(
+    job_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Liefert das Druckergebnis-Foto als Bild."""
+    j = db.query(PrintJob).filter(PrintJob.id == job_id).first()
+    if not j or not j.result_photo_path:
+        raise HTTPException(404, "Kein Foto vorhanden")
+    p = Path(j.result_photo_path)
+    if not p.exists():
+        raise HTTPException(404, "Foto-Datei nicht gefunden")
+    return FileResponse(p)
+
+
+@router.delete("/jobs/{job_id}/photo", status_code=204)
+def delete_result_photo(
+    job_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Entfernt das Druckergebnis-Foto."""
+    j = db.query(PrintJob).filter(PrintJob.id == job_id).first()
+    if not j:
+        raise HTTPException(404, "Auftrag nicht gefunden")
+    if j.result_photo_path:
+        p = Path(j.result_photo_path)
+        if p.exists():
+            try:
+                p.unlink()
+            except Exception:
+                pass
+    j.result_photo_path = None
+    db.commit()

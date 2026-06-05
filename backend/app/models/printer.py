@@ -22,6 +22,9 @@ class Printer(Base):
     bambu_ip = Column(String(50))              # Lokale IP für LAN-Modus
     bambu_serial = Column(String(120))         # MQTT Serial
 
+    # Verbindungsmodus: "lan" (Drucker im LAN Only Mode) oder "cloud" (über Bambu Cloud)
+    connection_mode = Column(String(20), default="lan")
+
     # Tuya Smart Plug für Stromverbrauch
     tuya_device_id = Column(String(120))       # Tuya Device ID der Steckdose
 

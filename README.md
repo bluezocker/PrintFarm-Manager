@@ -13,7 +13,7 @@ Drucker-Monitoring, Materialverwaltung, Auftragsabwicklung und Buchhaltung – a
 ![Docker](https://img.shields.io/badge/docker-ready-2496ed.svg)
 ![Status](https://img.shields.io/badge/status-aktiv-success.svg)
 
-[Features](#-features) · [Installation](#-installation) · [Screenshots](#-screenshots) · [Tech-Stack](#-tech-stack) · [Roadmap](#-roadmap)
+[Features](#-features) · [Installation](#-installation) · [Tech-Stack](#-tech-stack) · [Roadmap](#-roadmap)
 
 </div>
 
@@ -21,7 +21,7 @@ Drucker-Monitoring, Materialverwaltung, Auftragsabwicklung und Buchhaltung – a
 
 ## 📋 Über das Projekt
 
-PrintFarm Manager ist eine vollständige Self-Hosted-Lösung für den Betrieb einer kleinen bis mittleren 3D-Druckerei. Das System läuft im eigenen Netzwerk via Docker Compose, bindet **Bambu Lab Drucker** über die offizielle LAN-API ein, integriert **Tuya Smart Plugs** für Stromverbrauchsmessung und kümmert sich um alles drumherum – von der Material-Reservierung über Druckkalkulation bis zum automatisierten Rechnungsversand.
+PrintFarm Manager ist eine vollständige Self-Hosted-Lösung für den Betrieb einer kleinen bis mittleren 3D-Druckerei. Das System läuft im eigenen Netzwerk via Docker Compose, bindet **Bambu Lab Drucker** über die offizielle MQTT-API (LAN oder Cloud) ein, integriert **Tuya Smart Plugs** für Stromverbrauchsmessung und kümmert sich um alles drumherum – von der Material-Reservierung über Druckkalkulation bis zum automatisierten Rechnungsversand mit Kunden-Mailing.
 
 Entwickelt für **Kleinunternehmer**, **Hobby-Druckereien** und **kleine Werkstätten**, die ihre Druckaufträge professionell verwalten wollen, ohne auf SaaS-Lösungen angewiesen zu sein.
 
@@ -37,11 +37,18 @@ Entwickelt für **Kleinunternehmer**, **Hobby-Druckereien** und **kleine Werkst�
 - Auto-Refresh alle 30 Sekunden
 
 ### 🖨️ Druckerverwaltung
-- Mehrere Bambu Lab Drucker parallel via MQTT
+- Mehrere Bambu Lab Drucker parallel
+- **LAN-Modus ODER Cloud-Modus** je Drucker wählbar
 - Live-Status: Temperatur, Fortschritt, Restzeit, aktueller Job
 - Wartungshistorie mit Erinnerungen
-- RTSP-Kamera-Snapshot (P1/X1)
-- Pro Drucker: Stundensatz, Strompreis, Durchschnittsverbrauch, Marge
+- RTSP-Kamera-Snapshot (P1/X1, LAN-Modus)
+- Pro Drucker: Stundensatz, Strompreis, Marge
+
+### ☁️ Bambu Cloud-Integration
+- Verifizierungscode-Flow direkt in PrintFarm (kein Bambu Studio nötig)
+- Token-Caching - einmal verifizieren, dann monatelang gültig
+- Automatische Region-Erkennung (EU/US/CN)
+- Funktioniert auch wenn der Drucker NICHT im LAN-Only-Mode ist
 
 ### 🧵 Filamentverwaltung
 - Bestand pro Rolle mit Restmenge, Charge, Lagerort
@@ -54,20 +61,21 @@ Entwickelt für **Kleinunternehmer**, **Hobby-Druckereien** und **kleine Werkst�
 - Ersatzteile, Werkzeuge, Verbrauchsmaterial
 - Mindestbestand mit Warnung
 - Anschaffungskosten + Gesamtwert-Berechnung
-- Kategorisiert filterbar
 
 ### 👥 Kunden & Aufträge
 - Privat- und Geschäftskunden mit automatischer Kundennummer (K-XXXX)
 - Aufträge mit Auftragsnummer, Mengen, Lieferterminen
 - **Druckplatten pro Auftrag** – jede mit eigenem Namen, Druckzeit und Filamenten
-- Gesamt-Zeit und Gesamt-Material werden automatisch summiert
+- **Druck-Dateiname** für automatisches Matching mit MQTT-Events
+- **Druckergebnis-Foto** manuell hochladbar (Bambu Studio Screenshot)
 - Auto-Übernahme in Druckhistorie bei Abschluss
 
 ### 🧮 Druckkalkulation
 - Multi-Color-Drucke mit beliebig vielen Filamenten
 - Berücksichtigt Maschinenzeit, Stromkosten, Materialkosten
 - Konfigurierbare Marge → Verkaufspreis
-- Steh-alone-Kalkulator oder direkt im Auftrag
+- **Inline-Kalkulator** direkt im Auftrag-Modal
+- Verkaufspreis mit einem Klick übernehmen
 
 ### 💰 Rechnungssystem
 - Vollständiges Rechnungswesen mit automatischer Nummerierung
@@ -79,17 +87,33 @@ Entwickelt für **Kleinunternehmer**, **Hobby-Druckereien** und **kleine Werkst�
 - Versand per E-Mail mit PDF-Anhang
 - Kleinunternehmer-Modus (0% MwSt)
 
-### 📧 E-Mail-Benachrichtigungen
+### 📧 Customer-Mailing
+- **Status-Mails an Kunden** bei jedem Statuswechsel:
+  - "Auftrag eingegangen" (neu)
+  - "Auftrag in Bearbeitung" (in_progress)
+  - "Auftrag im Druck" (printing)
+  - "Auftrag fertiggestellt" (completed, mit Foto-Anhang!)
+  - "Zahlung eingegangen" (paid)
+  - "Auftrag storniert" (cancelled)
+- **Email-Templates frei editierbar** in der UI (Verwaltung → E-Mail-Texte)
+- **Platzhalter:** `{customer_name}`, `{order_number}`, `{title}`, `{due_date}`, `{company}`
+- **Live-Vorschau** mit Beispielwerten
+- **Doppel-Mail-Schutz** wenn MQTT + manuell beide feuern
+
+### 📨 Mitarbeiter-Benachrichtigungen
 - SMTP-Konfiguration (Mailcow-kompatibel)
 - Pro Mitarbeiter individuell konfigurierbar
 - Events: Druck gestartet/50%/fertig/fehlgeschlagen, Drucker-Fehler, Wartung fällig
-- Drucker-Filter
-- Auto-Mail an Kunden bei Druckende mit Foto
+- Drucker-Filter pro Mitarbeiter
+- Firmenname als Absender (statt "PrintFarm")
 
 ### ⚡ Stromverbrauch
 - Tuya Smart Plug Integration (LSC/Lidl etc.)
 - Aktuelle Leistung, Tages-/Monatsverbrauch, Gesamtstand
 - Eigener HTTP-Client mit HMAC-SHA256 (kein buggy SDK)
+- **API v2.0 cloud/thing** Pfade
+- Konfiguration über Web-UI (Verwaltung → Integrationen)
+- "Verbindung testen"-Button
 
 ### 📊 Auswertungen
 - Drucker-Auslastung, Erfolgsquote, Materialverbrauch
@@ -104,8 +128,13 @@ Entwickelt für **Kleinunternehmer**, **Hobby-Druckereien** und **kleine Werkst�
 ### 💾 Backup-System
 - Automatische tägliche DB-Backups um 03:00 Uhr
 - Manuelle Backups via Web-UI + Download
-- CLI-Skripte für externe Sicherung via Cron
+- CLI-Skripte für externe Sicherung via Cron (`docker compose cp`-Methode)
 - Behält die letzten 30 Backups, ältere werden automatisch gelöscht
+
+### 👤 Mitarbeiterverwaltung
+- Admin / Mitarbeiter-Rollen
+- **Mitarbeiter können eigenes Passwort ändern** (Profil-Seite)
+- Mitarbeiter-Profil mit Benutzerdaten
 
 ### 📱 Mobile-Optimierung
 - Sidebar als Burger-Menü auf Smartphones
@@ -127,7 +156,7 @@ Entwickelt für **Kleinunternehmer**, **Hobby-Druckereien** und **kleine Werkst�
 | **Icons** | Lucide React |
 | **PDF-Generierung** | ReportLab |
 | **Auth** | JWT-basiert (python-jose) |
-| **Drucker-API** | Bambu Lab MQTT (paho-mqtt) |
+| **Drucker-API** | Bambu Lab MQTT (paho-mqtt), LAN + Cloud |
 | **Smart-Plug-API** | Tuya Cloud API v2.0 (eigener HTTP-Client) |
 | **Deployment** | Docker Compose |
 
@@ -137,7 +166,7 @@ Entwickelt für **Kleinunternehmer**, **Hobby-Druckereien** und **kleine Werkst�
 
 ### Voraussetzungen
 - Docker und Docker Compose
-- Bambu Lab Drucker im LAN-Modus
+- Bambu Lab Drucker (LAN-Modus oder Cloud-Account)
 - Optional: Tuya Smart Plug
 - Optional: SMTP-Server
 
@@ -153,7 +182,6 @@ cp .env.example .env
 nano .env
 # DB_PASSWORD setzen
 # SECRET_KEY mit `openssl rand -hex 32` generieren
-# Optional: TUYA_ACCESS_ID, TUYA_ACCESS_SECRET
 
 # Bauen und starten
 sudo docker compose up -d --build
@@ -168,26 +196,12 @@ sudo docker compose up -d --build
 1. **Firmendaten** ausfüllen (Verwaltung → Firmendaten)
 2. **Standard-MwSt** setzen (Kleinunternehmer: 0%)
 3. **SMTP-Server** konfigurieren (Verwaltung → E-Mail-Server)
-4. **Drucker** anlegen (Drucker → Übersicht → Neu)
+4. **Integrationen** für Tuya / Bambu Cloud konfigurieren
+5. **E-Mail-Texte** anpassen (Verwaltung → E-Mail-Texte)
+6. **Drucker** anlegen (Drucker → Übersicht → Neu)
+7. **Admin-Passwort ändern** (Klick auf eigenen Namen unten links)
 
 Detaillierte Anleitung: siehe [INSTALLATION.md](INSTALLATION.md)
-
----
-
-## 📸 Screenshots
-
-> **Hinweis:** Screenshots werden noch ergänzt. Bei Interesse: einfach selbst aufsetzen und ansehen 😊
-
-Geplante Screenshots:
-- Dashboard mit Live-Widgets
-- Druckerverwaltung mit Live-Status
-- Filament-Übersicht mit Gruppierung
-
-- ![Filaments](docs/images/filaments.png)
-
-- Auftrag mit Druckplatten
-- Rechnung mit PDF-Vorschau
-- Mobile-Ansicht
 
 ---
 
@@ -197,16 +211,16 @@ Geplante Screenshots:
 printfarm/
 ├── backend/                    # FastAPI Backend
 │   ├── app/
-│   │   ├── api/                # API-Endpoints (Drucker, Filament, Aufträge, ...)
+│   │   ├── api/                # API-Endpoints
 │   │   ├── models/             # SQLAlchemy-Modelle
-│   │   ├── services/           # Business-Logik (Bambu, Tuya, Mail, PDF, ...)
+│   │   ├── services/           # Bambu, Tuya, Mail, PDF, ...
 │   │   ├── core/               # Auth, DB, Config
 │   │   └── main.py
 │   ├── Dockerfile
 │   └── requirements.txt
 ├── frontend/                   # React Frontend
 │   ├── src/
-│   │   ├── pages/              # Seiten (Dashboard, Drucker, Aufträge, ...)
+│   │   ├── pages/              # Dashboard, Drucker, Aufträge, ...
 │   │   ├── components/         # Layout, Modal, ProtectedRoute
 │   │   ├── services/           # API-Client, Auth-Context
 │   │   └── App.jsx
@@ -234,20 +248,15 @@ Mögliche Erweiterungen für künftige Versionen:
 - [ ] 2FA für Login
 - [ ] Erweiterte Statistiken (Profitabilität pro Kunde, Material-Trends)
 - [ ] Etiketten-Druck (für Aufträge mit QR-Code)
-
----
-
-## 🤝 Beitragen
-
-Dies ist primär ein privates Projekt für den eigenen Bedarf. Bei Interesse an Mitarbeit oder Bug-Reports gerne ein Issue eröffnen.
+- [ ] Foto-Galerie über alle abgeschlossenen Drucke
 
 ---
 
 ## 📝 Hinweise zu Drittanbietern
 
 ### Bambu Lab
-LAN-Modus muss am Drucker aktiv sein. Access Code unter:  
-Einstellungen → WLAN → LAN Mode.
+- **LAN-Modus**: Drucker im LAN-Only-Mode am Drucker aktivieren. Access Code unter Einstellungen → WLAN → Show Detail.
+- **Cloud-Modus**: Bambu-Account-Daten in Verwaltung → Integrationen eintragen, Verifizierungscode wird per Email versendet und in PrintFarm eingegeben.
 
 ### Tuya Smart Plugs
 - Tuya IoT Developer Account erforderlich (kostenlos für Eigennutzung)
@@ -265,8 +274,9 @@ Einstellungen → WLAN → LAN Mode.
 
 ## ⚠️ Bekannte Einschränkungen
 
-- **Bambu P1 Camera:** Firmware blockiert RTSP-Stream oft → Snapshots nicht zuverlässig
-- **Mehrere parallele Aufträge:** Kunden-Mail-Matching über Job-Name kann mehrdeutig sein
+- **Bambu P1 Camera (LAN):** Firmware blockiert RTSP-Stream oft → manueller Foto-Upload als Lösung eingebaut
+- **Bambu Cloud Camera:** Aktuell nicht implementiert
+- **Mehrere parallele Aufträge:** Kunden-Mail-Matching am besten via `print_file_name` (eindeutiger Dateiname)
 - **Tuya Trial:** Abo muss alle 6 Monate manuell verlängert werden
 
 ---

@@ -23,6 +23,9 @@ import Backup from './pages/Backup'
 import Smtp from './pages/Smtp'
 import Company from './pages/Company'
 import Users from './pages/Users'
+import Profile from './pages/Profile'
+import Integrations from './pages/Integrations'
+import EmailTemplates from './pages/EmailTemplates'
 
 function ProtectedRoute({ children, adminOnly = false }) {
   const { user, loading } = useAuth()
@@ -62,10 +65,13 @@ function AppRoutes() {
         <Route path="power" element={<Power />} />
         <Route path="calc" element={<Calc />} />
         <Route path="notifications" element={<Notifications />} />
+        <Route path="profile" element={<Profile />} />
         <Route path="export" element={<Export />} />
         <Route path="backup" element={<ProtectedRoute adminOnly><Backup /></ProtectedRoute>} />
         <Route path="company" element={<ProtectedRoute adminOnly><Company /></ProtectedRoute>} />
         <Route path="smtp" element={<ProtectedRoute adminOnly><Smtp /></ProtectedRoute>} />
+        <Route path="integrations" element={<ProtectedRoute adminOnly><Integrations /></ProtectedRoute>} />
+        <Route path="email-templates" element={<ProtectedRoute adminOnly><EmailTemplates /></ProtectedRoute>} />
         <Route path="users" element={<ProtectedRoute adminOnly><Users /></ProtectedRoute>} />
       </Route>
     </Routes>

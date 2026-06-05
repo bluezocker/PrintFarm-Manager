@@ -10,7 +10,7 @@ from app.core.security import (
     get_current_user, require_admin,
 )
 from app.models.user import User
-from app.schemas import Token, UserCreate, UserRead, UserUpdate
+from app.schemas import Token, UserCreate, UserRead, UserUpdate, ChangePasswordRequest
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -36,6 +36,25 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
 @router.get("/me", response_model=UserRead)
 def get_me(current_user: User = Depends(get_current_user)):
     return current_user
+
+
+@router.post("/me/change-password")
+def change_own_password(
+    data: ChangePasswordRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Eigenes Passwort ändern (für alle User verfügbar).
+
+    Erfordert das aktuelle Passwort zur Verifikation.
+    """
+    if not verify_password(data.current_password, current_user.hashed_password):
+        raise HTTPException(400, "Aktuelles Passwort ist falsch")
+    if len(data.new_password) < 6:
+        raise HTTPException(400, "Neues Passwort muss mindestens 6 Zeichen lang sein")
+    current_user.hashed_password = get_password_hash(data.new_password)
+    db.commit()
+    return {"success": True, "message": "Passwort erfolgreich geändert"}
 
 
 # ============ User-Verwaltung (Admin) ============

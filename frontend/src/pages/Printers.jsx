@@ -7,6 +7,7 @@ import Modal from '../components/Modal'
 const empty = {
   name: '', model: '', brand: 'Bambu Lab', serial_number: '',
   bambu_device_id: '', bambu_access_code: '', bambu_ip: '', bambu_serial: '',
+  connection_mode: 'lan',
   tuya_device_id: '', notes: '',
   hourly_rate: 0, power_price_kwh: 0.30, avg_power_w: 120, margin_percent: 20,
 }
@@ -94,7 +95,11 @@ export default function Printers() {
             )}
 
             <div className="flex gap-2 text-xs text-gray-500 mb-3">
-              {p.bambu_ip && <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded">Bambu</span>}
+              {p.bambu_serial && (
+                <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded">
+                  Bambu {p.connection_mode === 'cloud' ? '☁️' : '📡'}
+                </span>
+              )}
               {p.tuya_device_id && <span className="bg-purple-50 text-purple-700 px-2 py-0.5 rounded">Tuya</span>}
             </div>
 
@@ -137,24 +142,88 @@ export default function Printers() {
           </div>
 
           <div className="border-t pt-4">
-            <h3 className="font-medium mb-3 text-sm">Bambu Lab Verbindung (LAN-Modus)</h3>
-            <p className="text-xs text-gray-500 mb-3">
-              Auf dem Drucker: Einstellungen → Allgemein → LAN-only Mode. Zugangscode unter Einstellungen → WLAN ablesen.
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label className="label">IP-Adresse</label>
-                <input className="input" placeholder="192.168.1.100" value={form.bambu_ip} onChange={(e) => setForm({ ...form, bambu_ip: e.target.value })} />
-              </div>
-              <div>
-                <label className="label">Access Code</label>
-                <input className="input" value={form.bambu_access_code} onChange={(e) => setForm({ ...form, bambu_access_code: e.target.value })} />
-              </div>
-              <div className="col-span-2">
-                <label className="label">Serial (MQTT)</label>
-                <input className="input" value={form.bambu_serial} onChange={(e) => setForm({ ...form, bambu_serial: e.target.value })} />
-              </div>
+            <h3 className="font-medium mb-3 text-sm">Bambu Lab Verbindung</h3>
+
+            {/* Modus-Auswahl */}
+            <div className="grid grid-cols-2 gap-2 mb-4">
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, connection_mode: 'lan' })}
+                className={`px-4 py-3 rounded-md border-2 transition-colors text-left ${
+                  form.connection_mode === 'lan'
+                    ? 'border-primary-600 bg-primary-50'
+                    : 'border-gray-200 hover:border-gray-300'
+                }`}
+              >
+                <div className="font-medium text-sm">📡 LAN-Modus</div>
+                <div className="text-xs text-gray-500 mt-1">
+                  Drucker im LAN Only Mode, direkter Zugriff
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setForm({ ...form, connection_mode: 'cloud' })}
+                className={`px-4 py-3 rounded-md border-2 transition-colors text-left ${
+                  form.connection_mode === 'cloud'
+                    ? 'border-primary-600 bg-primary-50'
+                    : 'border-gray-200 hover:border-gray-300'
+                }`}
+              >
+                <div className="font-medium text-sm">☁️ Cloud-Modus</div>
+                <div className="text-xs text-gray-500 mt-1">
+                  Über Bambu Cloud, auch von außerhalb
+                </div>
+              </button>
             </div>
+
+            {form.connection_mode === 'lan' ? (
+              <>
+                <p className="text-xs text-gray-500 mb-3">
+                  Auf dem Drucker: Einstellungen → Allgemein → LAN-only Mode aktivieren.
+                  Access Code unter Einstellungen → WLAN ablesen.
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="label">IP-Adresse</label>
+                    <input className="input" placeholder="192.168.1.100"
+                      value={form.bambu_ip}
+                      onChange={(e) => setForm({ ...form, bambu_ip: e.target.value })} />
+                  </div>
+                  <div>
+                    <label className="label">Access Code</label>
+                    <input className="input"
+                      value={form.bambu_access_code}
+                      onChange={(e) => setForm({ ...form, bambu_access_code: e.target.value })} />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="label">Serial (MQTT)</label>
+                    <input className="input"
+                      value={form.bambu_serial}
+                      onChange={(e) => setForm({ ...form, bambu_serial: e.target.value })} />
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="bg-blue-50 border border-blue-200 rounded-md p-3 text-xs text-blue-900 mb-3">
+                  <p className="font-medium mb-1">ℹ️ Cloud-Modus aktiv</p>
+                  <p>
+                    Die Bambu-Cloud-Zugangsdaten (Email + Passwort) werden zentral unter
+                    <strong> Verwaltung → Integrationen</strong> gepflegt.
+                    Hier brauchst du nur die Seriennummer des Druckers.
+                  </p>
+                </div>
+                <div>
+                  <label className="label">Serial (Drucker-Seriennummer)</label>
+                  <input className="input" placeholder="01P00X1234567890"
+                    value={form.bambu_serial}
+                    onChange={(e) => setForm({ ...form, bambu_serial: e.target.value })} />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Im Bambu Studio: Gerät → Drucker-Info, oder auf dem Aufkleber am Drucker
+                  </p>
+                </div>
+              </>
+            )}
           </div>
 
           <div className="border-t pt-4">

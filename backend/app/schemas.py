@@ -37,6 +37,12 @@ class UserRead(UserBase):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ChangePasswordRequest(BaseModel):
+    """Schema für 'eigenes Passwort ändern' (mit Verifikation)."""
+    current_password: str
+    new_password: str
+
+
 # ============ Company ============
 class CompanyBase(BaseModel):
     name: str
@@ -90,6 +96,7 @@ class PrinterBase(BaseModel):
     bambu_access_code: Optional[str] = None
     bambu_ip: Optional[str] = None
     bambu_serial: Optional[str] = None
+    connection_mode: str = "lan"
     tuya_device_id: Optional[str] = None
     # Kalkulation
     hourly_rate: float = 0.0
@@ -113,6 +120,7 @@ class PrinterUpdate(BaseModel):
     bambu_access_code: Optional[str] = None
     bambu_ip: Optional[str] = None
     bambu_serial: Optional[str] = None
+    connection_mode: Optional[str] = None
     tuya_device_id: Optional[str] = None
     hourly_rate: Optional[float] = None
     power_price_kwh: Optional[float] = None
@@ -276,6 +284,7 @@ class PrintJobBase(BaseModel):
     price_net: float = 0.0
     price_gross: float = 0.0
     vat_rate: float = 19.0
+    print_file_name: Optional[str] = None  # Dateiname für Auto-Matching mit MQTT
     notes: Optional[str] = None
 
 
@@ -331,6 +340,7 @@ class PrintJobUpdate(BaseModel):
     price_net: Optional[float] = None
     price_gross: Optional[float] = None
     vat_rate: Optional[float] = None
+    print_file_name: Optional[str] = None
     notes: Optional[str] = None
     filaments: Optional[List[JobFilamentInput]] = None
     plates: Optional[List[JobPlateInput]] = None
@@ -340,6 +350,9 @@ class PrintJobRead(PrintJobBase):
     id: int
     order_number: Optional[str] = None
     file_path: Optional[str] = None
+    result_photo_path: Optional[str] = None
+    customer_notified_start: bool = False
+    customer_notified_done: bool = False
     calculated_cost_net: Optional[float] = None
     calculated_price_net: Optional[float] = None
     cost_breakdown: Optional[str] = None
@@ -593,3 +606,42 @@ class InventoryItemRead(InventoryItemBase):
     id: int
     created_at: datetime
     model_config = ConfigDict(from_attributes=True)
+
+
+# ============ Integration Settings (Tuya, Bambu Cloud) ============
+class IntegrationSettingsRead(BaseModel):
+    """Wird ans Frontend zurückgegeben.
+    WICHTIG: Passwörter werden NICHT enthüllt - nur ein Flag ob gesetzt.
+    """
+    tuya_enabled: bool = False
+    tuya_access_id: Optional[str] = None
+    tuya_access_secret_set: bool = False
+    tuya_api_endpoint: Optional[str] = None
+    bambu_enabled: bool = False
+    bambu_cloud_email: Optional[str] = None
+    bambu_cloud_password_set: bool = False
+
+    @classmethod
+    def from_orm_safe(cls, obj):
+        return cls(
+            tuya_enabled=bool(obj.tuya_enabled),
+            tuya_access_id=obj.tuya_access_id,
+            tuya_access_secret_set=bool(obj.tuya_access_secret),
+            tuya_api_endpoint=obj.tuya_api_endpoint,
+            bambu_enabled=bool(obj.bambu_enabled),
+            bambu_cloud_email=obj.bambu_cloud_email,
+            bambu_cloud_password_set=bool(obj.bambu_cloud_password),
+        )
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class IntegrationSettingsUpdate(BaseModel):
+    """Schema für PATCH-Update."""
+    tuya_enabled: Optional[bool] = None
+    tuya_access_id: Optional[str] = None
+    tuya_access_secret: Optional[str] = None     # leer = nicht ändern
+    tuya_api_endpoint: Optional[str] = None
+    bambu_enabled: Optional[bool] = None
+    bambu_cloud_email: Optional[str] = None
+    bambu_cloud_password: Optional[str] = None   # leer = nicht ändern

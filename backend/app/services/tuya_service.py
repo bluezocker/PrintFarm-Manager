@@ -28,14 +28,42 @@ logger = logging.getLogger(__name__)
 
 
 class TuyaService:
-    """Eigener Tuya API Client mit HMAC-SHA256 Signatur."""
+    """Eigener Tuya API Client mit HMAC-SHA256 Signatur.
+
+    Liest Zugangsdaten primär aus der Datenbank (IntegrationSettings),
+    fällt auf .env-Werte zurück falls in DB nichts gepflegt ist.
+    """
 
     def __init__(self):
+        # Defaults aus settings (env-Variablen, Backward-Compat)
         self.endpoint = settings.TUYA_API_ENDPOINT or "https://openapi.tuyaeu.com"
         self.access_id = settings.TUYA_ACCESS_ID
         self.access_secret = settings.TUYA_ACCESS_SECRET
         self._token: Optional[str] = None
         self._token_expires_at: float = 0  # Unix-Timestamp
+
+    def reload_from_db(self) -> bool:
+        """Lädt die Zugangsdaten aus der Datenbank.
+        Wird beim Speichern in der UI aufgerufen und bei jedem Connect.
+        Returns True wenn DB-Werte gefunden wurden.
+        """
+        try:
+            from app.core.database import SessionLocal
+            from app.models import IntegrationSettings
+            db = SessionLocal()
+            try:
+                s = db.query(IntegrationSettings).first()
+                if s and s.tuya_enabled and s.tuya_access_id and s.tuya_access_secret:
+                    self.endpoint = s.tuya_api_endpoint or "https://openapi.tuyaeu.com"
+                    self.access_id = s.tuya_access_id
+                    self.access_secret = s.tuya_access_secret
+                    self._token = None  # Token invalidieren wenn Creds wechseln
+                    return True
+            finally:
+                db.close()
+        except Exception as e:
+            logger.debug(f"Tuya reload_from_db: {e}")
+        return False
 
     # ------------------------------------------------------------------
     # Token Management
@@ -43,6 +71,9 @@ class TuyaService:
 
     def _get_token(self) -> Optional[str]:
         """Holt einen Access-Token, gecached bis Ablauf."""
+        # DB-Werte laden (falls vorhanden, überschreiben sie .env-Werte)
+        self.reload_from_db()
+
         # Token noch ~5 Min gültig? Wiederverwenden
         if self._token and time.time() < self._token_expires_at - 300:
             return self._token

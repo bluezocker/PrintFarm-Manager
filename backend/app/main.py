@@ -14,7 +14,7 @@ from app.services.camera_service import camera_manager
 from app.api import (
     auth, printers, power, filament, customers, history,
     company, calculation, invoices, notifications, camera, inventory,
-    dashboard, export, backup,
+    dashboard, export, backup, integrations, email_templates,
 )
 from app.services.notifier import start_notifier, stop_notifier
 from app.services.backup_service import start_auto_backup, stop_auto_backup
@@ -48,16 +48,51 @@ def initialize():
             logger.warning("Default-Admin angelegt (admin/admin) - BITTE PASSWORT ÄNDERN!")
 
         # Bambu-Drucker mit hinterlegten Daten verbinden
-        for p in db.query(Printer).all():
-            if p.bambu_ip and p.bambu_access_code and p.bambu_serial:
-                logger.info(f"Verbinde Drucker {p.name}...")
-                bambu_manager.register(p.id, p.bambu_ip, p.bambu_access_code, p.bambu_serial)
-            # Kamera-Stream für jeden Drucker mit IP + Access-Code starten
-            if p.bambu_ip and p.bambu_access_code:
-                camera_manager.register(p.id, p.bambu_ip, p.bambu_access_code)
+        from app.models import IntegrationSettings
+        integ_for_bambu = db.query(IntegrationSettings).first()
 
-        # Tuya-Verbindung versuchen
+        for p in db.query(Printer).all():
+            if not p.bambu_serial:
+                continue
+            if p.connection_mode == "cloud":
+                if (integ_for_bambu and integ_for_bambu.bambu_enabled
+                        and integ_for_bambu.bambu_cloud_email
+                        and integ_for_bambu.bambu_cloud_password):
+                    logger.info(f"Verbinde Drucker {p.name} (Cloud)...")
+                    bambu_manager.register_cloud(
+                        p.id, p.bambu_serial,
+                        integ_for_bambu.bambu_cloud_email,
+                        integ_for_bambu.bambu_cloud_password,
+                    )
+            else:
+                # LAN-Modus
+                if p.bambu_ip and p.bambu_access_code:
+                    logger.info(f"Verbinde Drucker {p.name} (LAN)...")
+                    bambu_manager.register_lan(p.id, p.bambu_ip, p.bambu_access_code, p.bambu_serial)
+                    camera_manager.register(p.id, p.bambu_ip, p.bambu_access_code)
+
+        # IntegrationSettings: Beim ersten Start aus .env importieren
+        from app.models import IntegrationSettings
+        from app.core.config import settings as app_settings
+        integ = db.query(IntegrationSettings).first()
+        if not integ:
+            integ = IntegrationSettings(id=1)
+            # Falls .env-Werte vorhanden sind, übernehmen
+            if app_settings.TUYA_ACCESS_ID and app_settings.TUYA_ACCESS_SECRET:
+                integ.tuya_enabled = True
+                integ.tuya_access_id = app_settings.TUYA_ACCESS_ID
+                integ.tuya_access_secret = app_settings.TUYA_ACCESS_SECRET
+                integ.tuya_api_endpoint = app_settings.TUYA_API_ENDPOINT
+                logger.info("Tuya-Zugangsdaten aus .env in DB importiert")
+            db.add(integ)
+            db.commit()
+
+        # Tuya-Verbindung versuchen (liest jetzt DB-Werte)
         tuya_service.connect()
+
+        # Email-Templates: Defaults seeden falls noch nicht vorhanden
+        from app.services.notifier import seed_default_email_templates
+        seed_default_email_templates(db)
     finally:
         db.close()
 
@@ -107,6 +142,8 @@ app.include_router(inventory.router)
 app.include_router(dashboard.router)
 app.include_router(export.router)
 app.include_router(backup.router)
+app.include_router(integrations.router)
+app.include_router(email_templates.router)
 
 
 @app.get("/")

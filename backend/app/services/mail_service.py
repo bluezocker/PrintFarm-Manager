@@ -3,6 +3,11 @@ SMTP-Mail-Service.
 
 Funktioniert mit jedem SMTP-Server (Mailcow, Postfix, Gmail, ...).
 Konfiguration über die smtp_settings-Tabelle.
+
+Absender-Logik:
+1. Wenn in SMTP-Settings `from_name` gesetzt ist → diesen nehmen
+2. Sonst: Firmenname aus Firmendaten verwenden
+3. Sonst: Fallback "PrintFarm"
 """
 import logging
 import smtplib
@@ -13,7 +18,7 @@ from pathlib import Path
 from typing import List, Optional
 from sqlalchemy.orm import Session
 
-from app.models import SmtpSettings
+from app.models import SmtpSettings, Company
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +28,20 @@ def _get_settings(db: Session) -> Optional[SmtpSettings]:
     if not s or not s.enabled or not s.host:
         return None
     return s
+
+
+def _resolve_sender_name(db: Session, smtp: SmtpSettings) -> str:
+    """Bestimmt den Absender-Namen mit folgender Priorität:
+    1. SMTP-Settings from_name (falls explizit gesetzt)
+    2. Firmenname aus Company-Tabelle
+    3. Fallback "PrintFarm"
+    """
+    if smtp.from_name and smtp.from_name.strip():
+        return smtp.from_name.strip()
+    company = db.query(Company).first()
+    if company and company.name and company.name.strip():
+        return company.name.strip()
+    return "PrintFarm"
 
 
 def send_mail(
@@ -50,7 +69,8 @@ def send_mail(
 
     try:
         msg = EmailMessage()
-        msg["From"] = formataddr((s.from_name or "PrintFarm", s.from_email or s.username))
+        sender_name = _resolve_sender_name(db, s)
+        msg["From"] = formataddr((sender_name, s.from_email or s.username))
         msg["To"] = ", ".join(to)
         msg["Subject"] = subject
         if s.reply_to:
@@ -105,10 +125,14 @@ def test_smtp(db: Session, test_to: str) -> tuple[bool, str]:
     s = _get_settings(db)
     if not s:
         return False, "SMTP nicht aktiviert oder unvollständig konfiguriert"
+    sender_name = _resolve_sender_name(db, s)
     ok = send_mail(
         db, test_to,
-        "PrintFarm Testmail",
-        "Wenn du diese E-Mail liest, funktioniert der SMTP-Versand korrekt. ✓",
-        "<p>Wenn du diese E-Mail liest, funktioniert der SMTP-Versand korrekt. ✓</p>",
+        f"{sender_name} Testmail",
+        f"Hallo!\n\nWenn du diese E-Mail liest, funktioniert der SMTP-Versand korrekt. ✓\n\n"
+        f"Absender: {sender_name}",
+        f"<p>Hallo!</p>"
+        f"<p>Wenn du diese E-Mail liest, funktioniert der SMTP-Versand korrekt. ✓</p>"
+        f"<p>Absender: <strong>{sender_name}</strong></p>",
     )
     return ok, "" if ok else "Fehler beim Versand - siehe Backend-Logs"

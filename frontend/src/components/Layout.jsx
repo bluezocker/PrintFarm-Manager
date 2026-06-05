@@ -5,7 +5,7 @@ import {
   LogOut, UserCog, Zap, Calculator, Receipt, Mail, Bell,
   LayoutDashboard, MapPin, ChevronDown, ChevronRight,
   BarChart3, DollarSign, Boxes, Settings, FileSpreadsheet, Database,
-  Menu, X,
+  Menu, X, Plug,
 } from 'lucide-react'
 import { useAuth } from '../services/auth'
 
@@ -50,10 +50,12 @@ const menuTree = [
 ]
 
 const adminItems = [
-  { to: '/company', label: 'Firmendaten',    icon: Building2 },
-  { to: '/smtp',    label: 'E-Mail-Server',  icon: Mail },
-  { to: '/users',   label: 'Mitarbeiter',    icon: UserCog },
-  { to: '/backup',  label: 'Backups',        icon: Database },
+  { to: '/company',         label: 'Firmendaten',    icon: Building2 },
+  { to: '/smtp',            label: 'E-Mail-Server',  icon: Mail },
+  { to: '/email-templates', label: 'E-Mail-Texte',   icon: FileText },
+  { to: '/integrations',    label: 'Integrationen',  icon: Plug },
+  { to: '/users',           label: 'Mitarbeiter',    icon: UserCog },
+  { to: '/backup',          label: 'Backups',        icon: Database },
 ]
 
 function MenuItem({ to, label, icon: Icon, end }) {
@@ -213,10 +215,15 @@ export default function Layout() {
         </nav>
 
         <div className="p-4 border-t border-slate-700">
-          <div className="text-sm mb-2">
+          <NavLink
+            to="/profile"
+            className="block text-sm mb-3 -mx-1 px-3 py-2 rounded-md hover:bg-slate-800 transition-colors"
+          >
             <p className="font-medium">{user?.full_name || user?.username}</p>
-            <p className="text-xs text-slate-400">{user?.role === 'admin' ? 'Administrator' : 'Mitarbeiter'}</p>
-          </div>
+            <p className="text-xs text-slate-400">
+              {user?.role === 'admin' ? 'Administrator' : 'Mitarbeiter'}
+            </p>
+          </NavLink>
           <button
             onClick={logout}
             className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm bg-slate-800 hover:bg-slate-700 rounded-md transition-colors"
