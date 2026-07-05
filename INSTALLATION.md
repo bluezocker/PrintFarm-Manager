@@ -1,15 +1,25 @@
 # PrintFarm Manager - Installation & Update
 
-Dieses Paket enthält die **komplette Anwendung** in Version 6.x mit allen Updates, Bugfixes und neuesten Features.
+Dieses Paket enthält die **komplette Anwendung** in Version 7.0 mit allen Features, Updates und Bugfixes.
 
-## Inhalt
+## Was ist in v7.0 neu vs. v6.x
 
-- `backend/` - FastAPI-Backend
-- `frontend/` - React-Frontend (mobile-optimiert)
-- `docker-compose.yml` - Docker-Setup
-- `backup.sh` / `restore.sh` - CLI-Skripte
-- `.env.example` - Vorlage für Umgebungsvariablen
-- `.gitignore` - GitHub-Vorbereitung
+### Große Features
+- 🐙 **OctoPrint-Integration**: Beliebige Drucker via OctoPrint anbinden
+  - Live-Status (Polling 15s)
+  - Pause / Resume / Cancel
+  - Datei-Upload zum OctoPrint
+  - Druck aus Datei-Liste starten
+- 📅 **Kalenderansicht mit Drag & Drop**: Auftrags-Termine visuell planen
+  - Monats- und Wochenansicht
+  - Aufträge per Drag&Drop verschieben
+  - Sidebar für unterminierte Aufträge
+  - Klick öffnet Edit-Modal
+
+### Bugfixes
+- `?edit=ID` URL-Parameter in Jobs.jsx nutzt jetzt korrekt `jobs` statt `items`
+- Notifier hat OctoPrint-Support im Polling-Loop
+- Startup-Prozess connectet OctoPrint-Drucker automatisch
 
 ---
 
@@ -20,12 +30,11 @@ Dieses Paket enthält die **komplette Anwendung** in Version 6.x mit allen Updat
 git clone https://github.com/bluezocker/PrintFarm-Manager.git printfarm
 cd printfarm
 
-# 2. Umgebungsvariablen anpassen
+# 2. Umgebungsvariablen
 cp .env.example .env
 nano .env
 # DB_PASSWORD setzen
 # SECRET_KEY mit `openssl rand -hex 32` generieren
-# Tuya- und Bambu-Daten konfigurierst du später in der Web-UI!
 
 # 3. Bauen und starten
 sudo docker compose up -d --build
@@ -37,13 +46,13 @@ sudo docker compose up -d --build
 ```
 
 ### Erste Schritte
-1. **Firmendaten** ausfüllen (Verwaltung → Firmendaten)
+1. **Firmendaten** ausfüllen
 2. **Standard-MwSt** setzen (Kleinunternehmer: 0%)
-3. **SMTP-Server** konfigurieren (Verwaltung → E-Mail-Server)
+3. **SMTP-Server** konfigurieren
 4. **Integrationen** für Tuya / Bambu Cloud
-5. **E-Mail-Texte** anpassen (Verwaltung → E-Mail-Texte)
-6. **Drucker** anlegen
-7. **Admin-Passwort ändern** (Klick auf eigenen Namen unten links)
+5. **E-Mail-Texte** anpassen
+6. **Drucker** anlegen (LAN/Cloud/OctoPrint)
+7. **Admin-Passwort ändern**
 
 ---
 
@@ -56,8 +65,8 @@ cd ~/Dokumente/printfarm
 
 sudo docker compose exec -T db sh -c \
     'PGPASSWORD="$POSTGRES_PASSWORD" pg_dump -U "$POSTGRES_USER" -f /tmp/dump.sql "$POSTGRES_DB"'
-sudo docker compose cp db:/tmp/dump.sql ./backup_pre_v6.sql
-ls -lh backup_pre_v6.sql
+sudo docker compose cp db:/tmp/dump.sql ./backup_pre_v7.sql
+ls -lh backup_pre_v7.sql
 ```
 
 ### 2. Code überschreiben
@@ -248,7 +257,6 @@ CREATE TABLE IF NOT EXISTS integration_settings (
   updated_at TIMESTAMP WITH TIME ZONE
 );
 
--- Bambu Token-Cache Spalten (für bestehende DBs)
 ALTER TABLE integration_settings ADD COLUMN IF NOT EXISTS bambu_cloud_token VARCHAR(2000);
 ALTER TABLE integration_settings ADD COLUMN IF NOT EXISTS bambu_cloud_user_id VARCHAR(100);
 ALTER TABLE integration_settings ADD COLUMN IF NOT EXISTS bambu_cloud_mqtt_host VARCHAR(200);
@@ -273,12 +281,14 @@ ALTER TABLE print_jobs ADD COLUMN IF NOT EXISTS customer_notified_start BOOLEAN 
 ALTER TABLE print_jobs ADD COLUMN IF NOT EXISTS customer_notified_done BOOLEAN DEFAULT FALSE;
 ALTER TABLE print_jobs ADD COLUMN IF NOT EXISTS result_photo_path VARCHAR(500);
 
--- ============ Printer: Kalkulations- & Cloud-Werte ============
+-- ============ Printer: Kalkulations- & Cloud- & OctoPrint-Werte ============
 ALTER TABLE printers ADD COLUMN IF NOT EXISTS hourly_rate FLOAT DEFAULT 0.0;
 ALTER TABLE printers ADD COLUMN IF NOT EXISTS power_price_kwh FLOAT DEFAULT 0.30;
 ALTER TABLE printers ADD COLUMN IF NOT EXISTS avg_power_w FLOAT DEFAULT 120.0;
 ALTER TABLE printers ADD COLUMN IF NOT EXISTS margin_percent FLOAT DEFAULT 0.0;
 ALTER TABLE printers ADD COLUMN IF NOT EXISTS connection_mode VARCHAR(20) DEFAULT 'lan';
+ALTER TABLE printers ADD COLUMN IF NOT EXISTS octo_url VARCHAR(300);
+ALTER TABLE printers ADD COLUMN IF NOT EXISTS octo_api_key VARCHAR(120);
 SQL
 ```
 
@@ -295,44 +305,30 @@ Strg+Shift+R (Hard Reload).
 
 ---
 
-## Was ist in v6.x neu
+## Feature-Übersicht
 
 ### Customer Journey
-- **Status-Mails an Kunden** bei jedem Statuswechsel (neu/in_progress/printing/completed/paid/cancelled)
-- **Email-Templates editierbar** in der Web-UI mit Platzhaltern und Live-Vorschau
-- **Druck-Dateiname** im Auftrag für automatisches MQTT-Matching → Kunde wird über Druckstart informiert
-- **Druckergebnis-Foto** manuell hochladbar (Bambu Studio Screenshot) → wird automatisch an "Fertig"-Mail angehängt
+- **Status-Mails an Kunden** bei jedem Statuswechsel
+- **Email-Templates editierbar** in der UI mit Platzhaltern und Live-Vorschau
+- **Druck-Dateiname** für automatisches MQTT-Matching
+- **Druckergebnis-Foto** manuell hochladbar
 
-### Bambu Cloud-Integration
-- LAN-Modus ODER Cloud-Modus je Drucker wählbar
-- Verifizierungscode-Flow direkt in PrintFarm
-- Token-Caching, automatische Region-Erkennung
+### Kalender
+- Monats-/Wochenansicht
+- Drag & Drop für Terminplanung
+- Sidebar für ungeplante Aufträge
+
+### Drucker-Verbindungen
+- Bambu LAN / Bambu Cloud / OctoPrint - jeweils separater Modus
+- OctoPrint: Live-Status, Steuerung, Datei-Upload, Druck-Start
 
 ### Kalkulation
-- **Inline-Kalkulator** im Auftrag-Modal
+- Inline-Kalkulator im Auftrag-Modal
 - Verkaufspreis mit einem Klick übernehmen
-- Funktioniert auch bei neuen Aufträgen (vor dem Speichern)
 
 ### Tuya v2.0
 - Konfiguration via Web-UI (kein Container-Restart nötig)
 - Auto-Migration aus .env beim ersten Start
-- "Verbindung testen"-Button
-
-### Mitarbeiter
-- Jeder User kann eigenes Passwort ändern
-- Profil-Seite mit Benutzerdaten
-
-### E-Mail
-- Firmenname als Absender (statt "PrintFarm")
-- Konfigurierbare Templates für Kunden-Mails
-
-### Bugfixes
-- MwSt 0% Bug behoben (Kleinunternehmer)
-- Backup-Streaming-Problem gelöst (`docker compose cp`-Methode)
-- Filament Route-Reihenfolge & batch_number
-- Mail-Sturm bei Container-Restart verhindert
-- Pause/Stop-Buttons entfernt (waren unzuverlässig)
-- Dashboard-Crash bei fehlenden Feldern behoben
 
 ---
 
@@ -342,7 +338,6 @@ Strg+Shift+R (Hard Reload).
 ```bash
 sudo ./backup.sh
 # Erstellt: ./backups/printfarm_YYYYMMDD_HHMMSS.tar.gz
-# Behält die letzten 30 Backups
 ```
 
 ### Tägliches Backup via Cron
@@ -370,33 +365,30 @@ sudo docker compose up -d --build frontend
 ### "no such column" / "table doesn't exist"
 Datenbank-Migration aus Schritt 3 wurde nicht ausgeführt.
 
+### OctoPrint zeigt "nicht verbunden"
+- URL richtig? Test: `curl -H "X-Api-Key: DEIN_KEY" http://DEINE_URL/api/version`
+- API-Key gültig?
+- Firewall zwischen Server und OctoPrint offen?
+
 ### Tuya: Code 501 oder "unknown error"
-Tuya hat manchmal API-Pfade geändert. Aktuelle Pfade (Stand 2026):
+Tuya-Pfade prüfen. Aktuell (Stand 2026):
 - Status: `/v2.0/cloud/thing/{id}/shadow/properties`
 - Statistik: `/v2.0/cloud/thing/{id}/statistics/days`
 - Schalten: `/v2.0/cloud/thing/{id}/shadow/properties/issue`
 
-Im Tuya IoT Portal → API Explorer kannst du die aktuellen Pfade prüfen.
-
-### Tuya Trial-Abo abgelaufen
-Im IoT-Portal alle 6 Monate verlängern (kostenlos). Neue Access ID/Secret in der Web-UI eintragen.
-
 ### Bambu Cloud Verifizierungscode geht nicht
 - Code ist nur ~5 Minuten gültig → immer den NEUESTEN nutzen
-- Falls dauerhaft Probleme: einmal mit denselben Daten in Bambu Studio einloggen
-- Account-Daten/Region prüfen (EU/US/CN)
+- Account-Region prüfen (EU/US/CN)
 
 ### Bambu LAN: "Not authorized"
 Access Code am Drucker neu ablesen (Einstellungen → WLAN → Show Detail).
-Achtung bei `0`/`O` und `1`/`l`/`I`-Verwechslung.
 
 ### Bambu Camera funktioniert nicht
-P1-Modelle blockieren RTSP oft → **Druckergebnis-Foto manuell hochladen** (Bambu Studio Screenshot) ist die zuverlässige Alternative.
+P1-Modelle blockieren RTSP oft → **Druckergebnis-Foto manuell hochladen**.
 
-### Backup-Skript hängt
-Sollte mit `docker compose cp`-Methode nicht passieren. Bei Problemen:
-```bash
-sudo docker compose exec -T db sh -c \
-    'PGPASSWORD="$POSTGRES_PASSWORD" pg_dump -U "$POSTGRES_USER" -f /tmp/test.sql "$POSTGRES_DB"'
-sudo docker compose cp db:/tmp/test.sql ./test_backup.sql
-```
+### Kalender leer trotz Aufträgen
+- Aufträge mit Status `completed`, `paid` oder `cancelled` werden nicht angezeigt (historisch)
+- Aufträge ohne `due_date` erscheinen in der rechten Sidebar
+
+### Aufträge-Seite weiß nach Update
+Browser hart neu laden (Strg+Shift+R). Falls das nicht hilft: Container neu bauen.

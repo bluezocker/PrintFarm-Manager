@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft, Plus, Wrench, RefreshCw, Camera, Mail } from 'lucide-react'
+import { ArrowLeft, Plus, Wrench, RefreshCw, Camera, Mail, Play, Pause, Square, Upload, FileText, Trash2 } from 'lucide-react'
 import api from '../services/api'
 import Modal from '../components/Modal'
 
@@ -176,10 +176,18 @@ export default function PrinterDetail() {
             </>
           ) : (
             <p className="text-gray-500 text-sm">
-              {status?.error || 'Nicht verbunden. Prüfe Bambu Lab Konfiguration (LAN-only Mode aktiv?).'}
+              {status?.error || 'Nicht verbunden. Prüfe die Drucker-Konfiguration.'}
             </p>
           )}
         </div>
+
+        {printer.connection_mode === 'octoprint' && (
+          <OctoPrintControls
+            printerId={printer.id}
+            status={status}
+            onStatusUpdate={refreshStatus}
+          />
+        )}
 
         {/* Druckerinfo */}
         <div className="card">
@@ -188,7 +196,17 @@ export default function PrinterDetail() {
             <div className="flex justify-between"><dt className="text-gray-500">Marke</dt><dd>{printer.brand}</dd></div>
             <div className="flex justify-between"><dt className="text-gray-500">Modell</dt><dd>{printer.model || '—'}</dd></div>
             <div className="flex justify-between"><dt className="text-gray-500">Seriennummer</dt><dd>{printer.serial_number || '—'}</dd></div>
-            <div className="flex justify-between"><dt className="text-gray-500">Bambu IP</dt><dd>{printer.bambu_ip || '—'}</dd></div>
+            <div className="flex justify-between"><dt className="text-gray-500">Verbindung</dt><dd>
+              {printer.connection_mode === 'octoprint' ? '🐙 OctoPrint' :
+               printer.connection_mode === 'cloud' ? '☁️ Bambu Cloud' :
+               '📡 Bambu LAN'}
+            </dd></div>
+            {printer.connection_mode === 'octoprint' && printer.octo_url && (
+              <div className="flex justify-between"><dt className="text-gray-500">OctoPrint URL</dt><dd className="font-mono text-xs truncate max-w-[200px]" title={printer.octo_url}>{printer.octo_url}</dd></div>
+            )}
+            {printer.connection_mode !== 'octoprint' && (
+              <div className="flex justify-between"><dt className="text-gray-500">Bambu IP</dt><dd>{printer.bambu_ip || '—'}</dd></div>
+            )}
             <div className="flex justify-between"><dt className="text-gray-500">Tuya Plug</dt><dd>{printer.tuya_device_id ? '✓' : '—'}</dd></div>
             <div className="flex justify-between"><dt className="text-gray-500">Kaufdatum</dt><dd>{printer.purchase_date || '—'}</dd></div>
           </dl>
@@ -361,6 +379,239 @@ export default function PrinterDetail() {
           </div>
         </div>
       </Modal>
+    </div>
+  )
+}
+
+
+// OctoPrint-Steuerung
+function OctoPrintControls({ printerId, status, onStatusUpdate }) {
+  const [files, setFiles] = useState([])
+  const [filesLoading, setFilesLoading] = useState(false)
+  const [filesOpen, setFilesOpen] = useState(false)
+  const [uploadOpen, setUploadOpen] = useState(false)
+  const [uploadFile, setUploadFile] = useState(null)
+  const [printNow, setPrintNow] = useState(true)
+  const [uploading, setUploading] = useState(false)
+  const [message, setMessage] = useState(null)
+  const [busy, setBusy] = useState(false)
+
+  const isPrinting = status?.status === 'printing'
+  const isPaused = status?.status === 'paused'
+  const isConnected = status?.connected
+
+  const loadFiles = async () => {
+    setFilesLoading(true)
+    try {
+      const r = await api.get(`/printers/${printerId}/octoprint/files`)
+      setFiles(r.data.files || [])
+    } catch (e) {
+      setMessage({ type: 'error', text: e.response?.data?.detail || 'Fehler beim Laden der Dateien' })
+    } finally {
+      setFilesLoading(false)
+    }
+  }
+
+  const toggleFiles = () => {
+    if (!filesOpen) loadFiles()
+    setFilesOpen(!filesOpen)
+  }
+
+  const doAction = async (action) => {
+    setBusy(true)
+    setMessage(null)
+    try {
+      await api.post(`/printers/${printerId}/${action}`)
+      setMessage({ type: 'success', text: `${action === 'pause' ? 'Pausiert' : action === 'resume' ? 'Fortgesetzt' : 'Abgebrochen'} ✓` })
+      if (onStatusUpdate) setTimeout(onStatusUpdate, 1000)
+    } catch (e) {
+      setMessage({ type: 'error', text: e.response?.data?.detail || `${action} fehlgeschlagen` })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const printFile = async (filePath) => {
+    if (!confirm(`Druck von "${filePath}" starten?`)) return
+    setBusy(true)
+    setMessage(null)
+    try {
+      await api.post(`/printers/${printerId}/octoprint/print`, { file_path: filePath })
+      setMessage({ type: 'success', text: `Druck gestartet: ${filePath} ✓` })
+      if (onStatusUpdate) setTimeout(onStatusUpdate, 1500)
+      setFilesOpen(false)
+    } catch (e) {
+      setMessage({ type: 'error', text: e.response?.data?.detail || 'Druckstart fehlgeschlagen' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const doUpload = async () => {
+    if (!uploadFile) {
+      setMessage({ type: 'error', text: 'Bitte eine Datei wählen' })
+      return
+    }
+    setUploading(true)
+    setMessage(null)
+    try {
+      const fd = new FormData()
+      fd.append('file', uploadFile)
+      const r = await api.post(
+        `/printers/${printerId}/octoprint/upload?print_now=${printNow}`,
+        fd,
+        { headers: { 'Content-Type': 'multipart/form-data' } }
+      )
+      setMessage({
+        type: 'success',
+        text: r.data.print_started
+          ? `Hochgeladen + Druck gestartet: ${r.data.filename} ✓`
+          : `Hochgeladen: ${r.data.filename} ✓`,
+      })
+      setUploadFile(null)
+      setUploadOpen(false)
+      if (filesOpen) loadFiles()
+      if (onStatusUpdate) setTimeout(onStatusUpdate, 1500)
+    } catch (e) {
+      setMessage({ type: 'error', text: e.response?.data?.detail || 'Upload fehlgeschlagen' })
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const formatSize = (bytes) => {
+    if (!bytes) return '—'
+    if (bytes < 1024) return `${bytes} B`
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  }
+
+  return (
+    <div className="card">
+      <h2 className="font-semibold mb-4 flex items-center gap-2">🐙 OctoPrint-Steuerung</h2>
+
+      {message && (
+        <div className={`p-2 rounded text-sm mb-3 ${
+          message.type === 'success'
+            ? 'bg-green-50 text-green-800 border border-green-200'
+            : 'bg-red-50 text-red-800 border border-red-200'
+        }`}>
+          {message.text}
+        </div>
+      )}
+
+      {!isConnected ? (
+        <p className="text-sm text-gray-500">OctoPrint nicht verbunden.</p>
+      ) : (
+        <>
+          <div className="flex flex-wrap gap-2 mb-4">
+            {isPrinting && (
+              <button onClick={() => doAction('pause')} disabled={busy}
+                className="btn-secondary flex items-center gap-2 text-sm disabled:opacity-50">
+                <Pause className="w-4 h-4" /> Pausieren
+              </button>
+            )}
+            {isPaused && (
+              <button onClick={() => doAction('resume')} disabled={busy}
+                className="btn-primary flex items-center gap-2 text-sm disabled:opacity-50">
+                <Play className="w-4 h-4" /> Fortsetzen
+              </button>
+            )}
+            {(isPrinting || isPaused) && (
+              <button
+                onClick={() => {
+                  if (confirm('Druck wirklich abbrechen?')) doAction('stop')
+                }}
+                disabled={busy}
+                className="btn-secondary flex items-center gap-2 text-sm text-red-600 disabled:opacity-50"
+              >
+                <Square className="w-4 h-4" /> Abbrechen
+              </button>
+            )}
+          </div>
+
+          <div className="border-t pt-3 space-y-2">
+            <div className="flex flex-wrap gap-2">
+              <button onClick={toggleFiles} className="btn-secondary text-sm flex items-center gap-2">
+                <FileText className="w-4 h-4" />
+                {filesOpen ? 'Dateien ausblenden' : 'Dateien anzeigen'}
+              </button>
+              <button onClick={() => setUploadOpen(!uploadOpen)} className="btn-secondary text-sm flex items-center gap-2">
+                <Upload className="w-4 h-4" />
+                {uploadOpen ? 'Upload schließen' : 'Datei hochladen'}
+              </button>
+            </div>
+
+            {uploadOpen && (
+              <div className="bg-gray-50 border rounded p-3 mt-2">
+                <label className="block">
+                  <span className="text-xs text-gray-600 mb-1 block">G-Code / 3MF Datei</span>
+                  <input
+                    type="file"
+                    accept=".gcode,.gco,.g,.3mf,.bgcode"
+                    onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
+                    className="text-sm w-full"
+                  />
+                </label>
+                {uploadFile && (
+                  <p className="text-xs text-gray-600 mt-1">
+                    Gewählt: {uploadFile.name} ({formatSize(uploadFile.size)})
+                  </p>
+                )}
+                <label className="flex items-center gap-2 mt-2 text-sm cursor-pointer">
+                  <input type="checkbox" checked={printNow} onChange={(e) => setPrintNow(e.target.checked)} className="w-4 h-4" />
+                  <span>Sofort drucken nach Upload</span>
+                </label>
+                <button
+                  onClick={doUpload}
+                  disabled={uploading || !uploadFile}
+                  className="btn-primary text-sm w-full mt-2 disabled:opacity-50"
+                >
+                  {uploading ? 'Lade hoch...' : 'Hochladen'}
+                </button>
+              </div>
+            )}
+
+            {filesOpen && (
+              <div className="bg-gray-50 border rounded mt-2 max-h-80 overflow-auto">
+                {filesLoading ? (
+                  <p className="text-sm text-gray-500 p-3">Lade Dateien...</p>
+                ) : files.length === 0 ? (
+                  <p className="text-sm text-gray-500 p-3">Keine Dateien gefunden</p>
+                ) : (
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-100 sticky top-0">
+                      <tr>
+                        <th className="text-left px-3 py-2 font-medium text-gray-600">Datei</th>
+                        <th className="text-right px-3 py-2 font-medium text-gray-600">Größe</th>
+                        <th className="text-right px-3 py-2 font-medium text-gray-600">Aktion</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {files.map((f) => (
+                        <tr key={f.path} className="border-t border-gray-200 hover:bg-white">
+                          <td className="px-3 py-2 truncate max-w-xs" title={f.path}>{f.path}</td>
+                          <td className="px-3 py-2 text-right text-gray-600">{formatSize(f.size)}</td>
+                          <td className="px-3 py-2 text-right">
+                            <button
+                              onClick={() => printFile(f.path)}
+                              disabled={busy || isPrinting}
+                              className="text-primary-600 hover:text-primary-800 disabled:opacity-30 inline-flex items-center gap-1"
+                              title={isPrinting ? 'Drucker beschäftigt' : 'Drucken'}
+                            >
+                              <Play className="w-3 h-3" /> Drucken
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   )
 }

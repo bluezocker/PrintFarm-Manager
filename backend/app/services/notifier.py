@@ -73,10 +73,9 @@ def _notify_customer_on_print_end(db, event: str, printer: Printer, status: dict
 def _match_job_to_print(db, status: dict, printer: Printer):
     """Findet den PrintJob, der zum aktuellen MQTT-Status-Event passt.
 
-    Match-Priorität (von genau zu unscharf):
-    1. print_file_name exakt im current_job_name enthalten
-    2. title im current_job_name enthalten
-    3. Wenn nur EIN offener Auftrag existiert, der wird genommen
+    Bambu liefert zwei verschiedene Namen via MQTT:
+    - gcode_file:    der Dateiname (z.B. "wuerfel.3mf")
+    - subtask_name:  die Bauplatten-Bezeichnung (z.B. "Plate 1")
     """
     jobs = db.query(PrintJob).filter(
         PrintJob.status.in_(["printing", "in_progress", "new"])
@@ -84,18 +83,21 @@ def _match_job_to_print(db, status: dict, printer: Printer):
     if not jobs:
         return None
 
-    job_name = (status.get("current_job_name") or "").lower()
+    file_name = (status.get("current_file_name") or "").lower()
+    subtask_name = (status.get("current_subtask_name") or "").lower()
+    legacy_job_name = (status.get("current_job_name") or "").lower()
+    haystack = " ".join(filter(None, [file_name, subtask_name, legacy_job_name]))
 
-    # 1. print_file_name (genauester Match)
-    if job_name:
+    # 1. print_file_name (genauester Match) - egal in welchem Feld
+    if haystack:
         for j in jobs:
-            if j.print_file_name and j.print_file_name.lower() in job_name:
+            if j.print_file_name and j.print_file_name.lower() in haystack:
                 return j
 
     # 2. title als Fallback
-    if job_name:
+    if haystack:
         for j in jobs:
-            if j.title and j.title.lower() in job_name:
+            if j.title and j.title.lower() in haystack:
                 return j
 
     # 3. Wenn nur ein Auftrag, der ist's
@@ -170,20 +172,18 @@ def _notify_customer_on_event(db, event: str, printer: Printer, status: dict):
 
     text += f"Mit freundlichen Grüßen\n{company.name or 'Ihr Druckerei-Team'}"
 
-    # Foto anhängen bei Erfolg/Fehler:
-    # 1. Priorität: Manuell hochgeladenes Druckergebnis-Foto am Auftrag
-    # 2. Fallback: Live-Snapshot vom RTSP-Stream (klappt bei Bambu oft nicht)
+    # Foto anhängen: 1. manuelles Foto am Job, 2. RTSP-Snapshot als Fallback
     attachments = []
-    snap_path = None  # Wird nur befüllt wenn wir ein temp-Foto erstellen
+    snap_path = None
     if event in ("print_success", "print_failed"):
-        # 1. Manuelles Foto
+        # 1. Manuelles Druckergebnis-Foto
         if match.result_photo_path:
-            from pathlib import Path
-            mp = Path(match.result_photo_path)
+            from pathlib import Path as _P
+            mp = _P(match.result_photo_path)
             if mp.exists():
                 attachments.append(str(mp))
                 logger.info(f"Mail: nutze manuelles Foto {mp.name}")
-        # 2. RTSP-Snapshot nur falls kein manuelles Foto vorhanden
+        # 2. RTSP-Snapshot nur falls kein manuelles Foto
         if not attachments and printer.bambu_ip and printer.bambu_access_code:
             snap = camera_manager.get_snapshot(printer.id, printer.bambu_ip, printer.bambu_access_code)
             if snap:
@@ -215,8 +215,10 @@ def _notify_customer_on_event(db, event: str, printer: Printer, status: dict):
             pass
 
 
-# Default-Templates - werden beim ersten Start in die DB übernommen
-# und sind Fallback falls jemand alle Templates löscht.
+# ======================================================================
+# Status-Mails: editierbare Templates aus DB
+# ======================================================================
+
 DEFAULT_STATUS_TEMPLATES = {
     "new": {
         "label": "Status: Neu",
@@ -291,10 +293,6 @@ DEFAULT_STATUS_TEMPLATES = {
 
 
 def seed_default_email_templates(db) -> int:
-    """Seeded fehlende Default-Templates in die DB.
-
-    Returns Anzahl neu angelegter Templates. Bestehende werden NIE überschrieben.
-    """
     from app.models import EmailTemplate
     created = 0
     for status_key, defaults in DEFAULT_STATUS_TEMPLATES.items():
@@ -319,12 +317,10 @@ def seed_default_email_templates(db) -> int:
 
 
 def _render_template(template_str: str, context: dict) -> str:
-    """Ersetzt Platzhalter in Template - tolerant gegen unbekannte Keys."""
     try:
         return template_str.format(**context)
     except KeyError as e:
-        logger.warning(f"Template: unbekannter Platzhalter {e}, ignoriere")
-        # Fallback: nur die im Kontext vorhandenen Keys ersetzen
+        logger.warning(f"Template: unbekannter Platzhalter {e}")
         result = template_str
         for k, v in context.items():
             result = result.replace("{" + k + "}", str(v))
@@ -332,56 +328,38 @@ def _render_template(template_str: str, context: dict) -> str:
 
 
 def notify_customer_on_status_change(db, job, new_status: str) -> bool:
-    """Sendet eine Email an den Kunden bei manuellem Statuswechsel.
-
-    Templates kommen aus der DB (Tabelle email_templates).
-    Falls dort kein Eintrag existiert, wird der Default genutzt.
-    Returns True wenn Mail versendet wurde, False sonst.
-    """
+    """Sendet eine Email an den Kunden bei manuellem Statuswechsel."""
     from app.models import EmailTemplate
 
-    # Template aus DB laden
     tmpl = db.query(EmailTemplate).filter(
         EmailTemplate.status_key == new_status
     ).first()
 
-    # Wenn deaktiviert: nicht versenden
     if tmpl and not tmpl.enabled:
         logger.info(f"Status-Mail übersprungen: Template '{new_status}' deaktiviert")
         return False
 
-    # Fallback: Default-Template wenn nichts in DB
     if not tmpl:
         defaults = DEFAULT_STATUS_TEMPLATES.get(new_status)
         if not defaults:
-            return False  # unbekannter Status
+            return False
         subject_tpl = defaults["subject"]
         body_tpl = defaults["body"]
     else:
         subject_tpl = tmpl.subject
         body_tpl = tmpl.body
 
-    # Doppel-Mail-Schutz: Wenn der MQTT-Notifier schon eine Start-Mail
-    # geschickt hat, nicht nochmal bei manuellem 'printing'-Status mailen
+    # Doppel-Mail-Schutz
     if new_status == "printing" and getattr(job, "customer_notified_start", False):
-        logger.info(
-            f"Status-Mail übersprungen: customer_notified_start bereits gesetzt "
-            f"(Job {job.id})"
-        )
+        logger.info(f"Status-Mail übersprungen: customer_notified_start bereits gesetzt (Job {job.id})")
         return False
     if new_status == "completed" and getattr(job, "customer_notified_done", False):
-        logger.info(
-            f"Status-Mail übersprungen: customer_notified_done bereits gesetzt "
-            f"(Job {job.id})"
-        )
+        logger.info(f"Status-Mail übersprungen: customer_notified_done bereits gesetzt (Job {job.id})")
         return False
 
     customer = db.query(Customer).filter(Customer.id == job.customer_id).first()
     if not customer or not customer.email:
-        logger.info(
-            f"Status-Mail übersprungen: Kunde ohne Email "
-            f"(Job {job.id} -> {new_status})"
-        )
+        logger.info(f"Status-Mail übersprungen: Kunde ohne Email (Job {job.id} -> {new_status})")
         return False
 
     from app.api.company import get_or_create_company
@@ -403,7 +381,7 @@ def notify_customer_on_status_change(db, job, new_status: str) -> bool:
     subject = _render_template(subject_tpl, context)
     text = _render_template(body_tpl, context)
 
-    # Foto anhängen bei "completed": manuelles Druckergebnis-Foto wenn vorhanden
+    # Foto bei "completed" anhängen
     attachments = []
     if new_status == "completed" and job.result_photo_path:
         from pathlib import Path
@@ -414,11 +392,7 @@ def notify_customer_on_status_change(db, job, new_status: str) -> bool:
 
     ok = send_mail(db, customer.email, subject, text, attachments=attachments)
     if ok:
-        logger.info(
-            f"Status-Mail gesendet: Job {job.id} -> {new_status} "
-            f"an {customer.email}"
-        )
-        # Flags setzen damit der MQTT-Notifier später nicht doppelt mailt
+        logger.info(f"Status-Mail gesendet: Job {job.id} -> {new_status} an {customer.email}")
         if new_status == "printing":
             job.customer_notified_start = True
         elif new_status in ("completed", "cancelled"):
@@ -524,21 +498,38 @@ def _poll_once():
     try:
         printers = db.query(Printer).all()
         for printer in printers:
-            client = bambu_manager.get(printer.id)
-            if not client:
-                # Versuche zu verbinden falls möglich
-                if printer.bambu_ip and printer.bambu_access_code and printer.bambu_serial:
-                    client = bambu_manager.register(
-                        printer.id, printer.bambu_ip, printer.bambu_access_code, printer.bambu_serial,
-                    )
+            # OctoPrint-Drucker
+            if printer.connection_mode == "octoprint":
+                from app.services.octoprint_service import octoprint_manager
+                client = octoprint_manager.get(printer.id)
                 if not client:
+                    if printer.octo_url and printer.octo_api_key:
+                        client = octoprint_manager.register(
+                            printer.id, printer.octo_url, printer.octo_api_key,
+                        )
+                    if not client:
+                        continue
+                try:
+                    curr = client.get_status()
+                except Exception as e:
+                    logger.warning(f"OctoPrint-Status-Fehler {printer.name}: {e}")
                     continue
+            else:
+                # Bambu (LAN/Cloud)
+                client = bambu_manager.get(printer.id)
+                if not client:
+                    if printer.bambu_ip and printer.bambu_access_code and printer.bambu_serial:
+                        client = bambu_manager.register(
+                            printer.id, printer.bambu_ip, printer.bambu_access_code, printer.bambu_serial,
+                        )
+                    if not client:
+                        continue
 
-            try:
-                curr = client.get_status_summary()
-            except Exception as e:
-                logger.warning(f"Status-Fehler {printer.name}: {e}")
-                continue
+                try:
+                    curr = client.get_status_summary()
+                except Exception as e:
+                    logger.warning(f"Status-Fehler {printer.name}: {e}")
+                    continue
 
             if not curr.get("connected"):
                 continue

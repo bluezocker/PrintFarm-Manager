@@ -96,6 +96,8 @@ class PrinterBase(BaseModel):
     bambu_access_code: Optional[str] = None
     bambu_ip: Optional[str] = None
     bambu_serial: Optional[str] = None
+    octo_url: Optional[str] = None
+    octo_api_key: Optional[str] = None
     connection_mode: str = "lan"
     tuya_device_id: Optional[str] = None
     # Kalkulation
@@ -120,6 +122,8 @@ class PrinterUpdate(BaseModel):
     bambu_access_code: Optional[str] = None
     bambu_ip: Optional[str] = None
     bambu_serial: Optional[str] = None
+    octo_url: Optional[str] = None
+    octo_api_key: Optional[str] = None
     connection_mode: Optional[str] = None
     tuya_device_id: Optional[str] = None
     hourly_rate: Optional[float] = None

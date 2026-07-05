@@ -22,7 +22,11 @@ class Printer(Base):
     bambu_ip = Column(String(50))              # Lokale IP für LAN-Modus
     bambu_serial = Column(String(120))         # MQTT Serial
 
-    # Verbindungsmodus: "lan" (Drucker im LAN Only Mode) oder "cloud" (über Bambu Cloud)
+    # OctoPrint Spezifika
+    octo_url = Column(String(300))             # z.B. http://192.168.1.50
+    octo_api_key = Column(String(120))         # API-Key aus OctoPrint Einstellungen
+
+    # Verbindungsmodus: "lan" (Bambu LAN), "cloud" (Bambu Cloud), "octoprint" (OctoPrint)
     connection_mode = Column(String(20), default="lan")
 
     # Tuya Smart Plug für Stromverbrauch

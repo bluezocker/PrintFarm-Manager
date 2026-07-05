@@ -1,7 +1,7 @@
 """Kundenverwaltung und Druckaufträge."""
 from datetime import datetime, date as Date
 from pathlib import Path
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Body
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -283,6 +283,77 @@ def list_jobs(
     return q.order_by(PrintJob.created_at.desc()).all()
 
 
+@router.get("/jobs/calendar")
+def list_jobs_for_calendar(
+    from_date: str | None = None,
+    to_date: str | None = None,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Kompakte Auftragsliste für die Kalenderansicht."""
+    q = db.query(PrintJob).filter(
+        ~PrintJob.status.in_(["completed", "paid", "cancelled"])
+    )
+    if from_date and to_date:
+        try:
+            from_d = datetime.strptime(from_date, "%Y-%m-%d").date()
+            to_d = datetime.strptime(to_date, "%Y-%m-%d").date()
+            q = q.filter(
+                (PrintJob.due_date == None) |
+                ((PrintJob.due_date >= from_d) & (PrintJob.due_date <= to_d))
+            )
+        except ValueError:
+            raise HTTPException(400, "Datumsformat muss YYYY-MM-DD sein")
+
+    jobs = q.order_by(PrintJob.due_date.asc().nulls_last()).all()
+
+    result = []
+    for j in jobs:
+        customer = db.query(Customer).filter(Customer.id == j.customer_id).first()
+        customer_name = ""
+        if customer:
+            customer_name = (
+                customer.company_name if customer.customer_type == "business"
+                else f"{customer.first_name or ''} {customer.last_name or ''}".strip()
+            )
+        result.append({
+            "id": j.id,
+            "title": j.title or "(ohne Titel)",
+            "order_number": j.order_number,
+            "status": j.status,
+            "due_date": j.due_date.isoformat() if j.due_date else None,
+            "estimated_hours": j.estimated_hours,
+            "quantity": j.quantity,
+            "customer_id": j.customer_id,
+            "customer_name": customer_name,
+            "price_gross": j.price_gross,
+        })
+    return result
+
+
+@router.patch("/jobs/{job_id}/due-date", response_model=PrintJobRead)
+def update_job_due_date(
+    job_id: int,
+    due_date: str | None = Body(None, embed=True),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Schneller Endpoint für Drag&Drop im Kalender."""
+    j = db.query(PrintJob).filter(PrintJob.id == job_id).first()
+    if not j:
+        raise HTTPException(404, "Auftrag nicht gefunden")
+    if due_date:
+        try:
+            j.due_date = datetime.strptime(due_date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(400, "Datumsformat muss YYYY-MM-DD sein")
+    else:
+        j.due_date = None
+    db.commit()
+    db.refresh(j)
+    return j
+
+
 @router.post("/jobs", response_model=PrintJobRead, status_code=201)
 def create_job(
     data: PrintJobCreate, db: Session = Depends(get_db), _: User = Depends(get_current_user)
@@ -368,7 +439,6 @@ def update_job(
             from app.services.notifier import notify_customer_on_status_change
             notify_customer_on_status_change(db, j, j.status)
         except Exception as e:
-            # Mail-Fehler soll den API-Call nicht abbrechen
             import logging
             logging.getLogger(__name__).error(f"Status-Mail Fehler: {e}")
     return j
@@ -410,11 +480,10 @@ def move_job_to_history(
 # ===================== Druckergebnis-Foto =====================
 
 ALLOWED_PHOTO_EXT = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif"}
-MAX_PHOTO_BYTES = 10 * 1024 * 1024   # 10 MB
+MAX_PHOTO_BYTES = 10 * 1024 * 1024
 
 
 def _photo_dir() -> Path:
-    """Verzeichnis für Druckergebnis-Fotos. Wird erstellt falls nicht vorhanden."""
     d = Path(settings.UPLOAD_DIR) / "result_photos"
     d.mkdir(parents=True, exist_ok=True)
     return d
@@ -427,12 +496,11 @@ async def upload_result_photo(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    """Lädt ein Druckergebnis-Foto hoch. Wird bei der "Fertig"-Mail mitgeschickt."""
+    """Lädt ein Druckergebnis-Foto hoch."""
     j = db.query(PrintJob).filter(PrintJob.id == job_id).first()
     if not j:
         raise HTTPException(404, "Auftrag nicht gefunden")
 
-    # Datei-Endung prüfen
     ext = Path(file.filename or "").suffix.lower()
     if ext not in ALLOWED_PHOTO_EXT:
         raise HTTPException(
@@ -440,12 +508,10 @@ async def upload_result_photo(
             f"Dateityp nicht erlaubt. Erlaubt: {', '.join(sorted(ALLOWED_PHOTO_EXT))}"
         )
 
-    # Größe prüfen (Stream lesen)
     content = await file.read()
     if len(content) > MAX_PHOTO_BYTES:
         raise HTTPException(400, f"Datei zu groß (max. {MAX_PHOTO_BYTES // 1024 // 1024} MB)")
 
-    # Altes Foto löschen falls vorhanden
     if j.result_photo_path:
         old = Path(j.result_photo_path)
         if old.exists():
@@ -454,7 +520,6 @@ async def upload_result_photo(
             except Exception:
                 pass
 
-    # Neue Datei speichern
     filename = f"job_{job_id}_{datetime.utcnow():%Y%m%d_%H%M%S}{ext}"
     target = _photo_dir() / filename
     target.write_bytes(content)
@@ -471,7 +536,6 @@ def get_result_photo(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    """Liefert das Druckergebnis-Foto als Bild."""
     j = db.query(PrintJob).filter(PrintJob.id == job_id).first()
     if not j or not j.result_photo_path:
         raise HTTPException(404, "Kein Foto vorhanden")
@@ -487,7 +551,6 @@ def delete_result_photo(
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    """Entfernt das Druckergebnis-Foto."""
     j = db.query(PrintJob).filter(PrintJob.id == job_id).first()
     if not j:
         raise HTTPException(404, "Auftrag nicht gefunden")

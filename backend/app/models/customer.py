@@ -72,7 +72,6 @@ class PrintJob(Base):
     print_file_name = Column(String(300))      # Dateiname auf dem Drucker (z.B. "wuerfel.3mf")
                                                 # Wird für Auto-Matching von MQTT-Events genutzt
     result_photo_path = Column(String(500))    # Manuell hochgeladenes Foto vom Druckergebnis
-                                                # Wird bei "completed"-Mail an Kunden angehängt
     customer_notified_start = Column(Boolean, default=False)    # Kunde wurde über Druckstart informiert
     customer_notified_done = Column(Boolean, default=False)     # Kunde wurde über Fertigstellung informiert
     notes = Column(Text)

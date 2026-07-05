@@ -5,7 +5,7 @@ import {
   LogOut, UserCog, Zap, Calculator, Receipt, Mail, Bell,
   LayoutDashboard, MapPin, ChevronDown, ChevronRight,
   BarChart3, DollarSign, Boxes, Settings, FileSpreadsheet, Database,
-  Menu, X, Plug,
+  Menu, X, Plug, Calendar as CalendarIcon,
 } from 'lucide-react'
 import { useAuth } from '../services/auth'
 
@@ -33,6 +33,7 @@ const menuTree = [
     children: [
       { to: '/customers', label: 'Kunden',    icon: Users },
       { to: '/jobs',      label: 'Aufträge',  icon: FileText },
+      { to: '/calendar',  label: 'Kalender',  icon: CalendarIcon },
       { to: '/invoices',  label: 'Rechnungen', icon: Receipt },
     ],
   },

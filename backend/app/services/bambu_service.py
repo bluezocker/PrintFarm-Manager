@@ -461,6 +461,8 @@ class BambuPrinterClient:
         return {
             "status": status_map.get(gcode_state, gcode_state.lower()),
             "current_job_name": data.get("subtask_name") or data.get("gcode_file"),
+            "current_file_name": data.get("gcode_file"),
+            "current_subtask_name": data.get("subtask_name"),
             "progress": float(data.get("mc_percent", 0)),
             "nozzle_temp": data.get("nozzle_temper"),
             "bed_temp": data.get("bed_temper"),

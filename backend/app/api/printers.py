@@ -1,6 +1,6 @@
 """Druckerverwaltung mit Bambu-Live-Status und Wartungseinträgen."""
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Body
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -22,25 +22,33 @@ def list_printers(db: Session = Depends(get_db), _: User = Depends(get_current_u
 
 
 def _register_printer_mqtt(printer: Printer, db: Session):
-    """Verbindet einen Drucker je nach Modus mit LAN oder Cloud.
+    """Verbindet einen Drucker je nach Modus."""
+    # OctoPrint-Modus
+    if printer.connection_mode == "octoprint":
+        from app.services.octoprint_service import octoprint_manager
+        bambu_manager.unregister(printer.id)
+        if printer.octo_url and printer.octo_api_key:
+            octoprint_manager.register(
+                printer.id, printer.octo_url, printer.octo_api_key,
+            )
+        return
 
-    Cloud-Modus liest die Account-Daten aus IntegrationSettings (Verwaltung → Integrationen).
-    """
+    # Bei Wechsel: OctoPrint-Polling stoppen
+    from app.services.octoprint_service import octoprint_manager
+    octoprint_manager.unregister(printer.id)
+
     if not printer.bambu_serial:
-        return  # ohne Serial geht gar nichts
+        return
 
     if printer.connection_mode == "cloud":
-        # Cloud-Account aus Integrationen laden
         from app.models import IntegrationSettings
         s = db.query(IntegrationSettings).first()
         if not s or not s.bambu_enabled or not s.bambu_cloud_email or not s.bambu_cloud_password:
-            # Keine Cloud-Daten konfiguriert - nichts tun, User muss erst in Integrationen pflegen
             return
         bambu_manager.register_cloud(
             printer.id, printer.bambu_serial,
             s.bambu_cloud_email, s.bambu_cloud_password,
         )
-        # Im Cloud-Modus keine LAN-Kamera
         return
 
     # LAN-Modus (Default)
@@ -106,6 +114,20 @@ def delete_printer(
 
 # ============ Live-Status via Bambu MQTT ============
 
+def _get_client(printer: Printer):
+    """Holt passenden Client je nach connection_mode."""
+    if printer.connection_mode == "octoprint":
+        from app.services.octoprint_service import octoprint_manager
+        client = octoprint_manager.get(printer.id)
+        if not client:
+            return None, None
+        return client, client.get_status
+    client = bambu_manager.get(printer.id)
+    if not client:
+        return None, None
+    return client, client.get_status_summary
+
+
 @router.get("/{printer_id}/status")
 def get_live_status(
     printer_id: int,
@@ -116,18 +138,18 @@ def get_live_status(
     if not printer:
         raise HTTPException(404, "Drucker nicht gefunden")
 
-    client = bambu_manager.get(printer_id)
-    if not client and printer.bambu_serial:
-        # Lazy-Register beim ersten Status-Abruf
+    client, get_status_fn = _get_client(printer)
+    if not client:
         _register_printer_mqtt(printer, db)
-        client = bambu_manager.get(printer_id)
+        client, get_status_fn = _get_client(printer)
 
     if not client:
+        if printer.connection_mode == "octoprint":
+            return {"connected": False, "error": "OctoPrint-Daten nicht konfiguriert"}
         return {"connected": False, "error": "Bambu-Daten nicht konfiguriert"}
 
-    status = client.get_status_summary()
+    status = get_status_fn()
 
-    # In DB persistieren
     if status.get("status"):
         printer.status = status["status"]
         printer.current_job_name = status.get("current_job_name")
@@ -145,6 +167,15 @@ def get_live_status(
 def pause_print(
     printer_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)
 ):
+    printer = db.query(Printer).filter(Printer.id == printer_id).first()
+    if not printer:
+        raise HTTPException(404, "Drucker nicht gefunden")
+    if printer.connection_mode == "octoprint":
+        from app.services.octoprint_service import octoprint_manager
+        client = octoprint_manager.get(printer_id)
+        if not client:
+            raise HTTPException(400, "OctoPrint nicht verbunden")
+        return {"success": client.pause()}
     client = bambu_manager.get(printer_id)
     if not client:
         raise HTTPException(400, "Drucker nicht verbunden")
@@ -155,6 +186,15 @@ def pause_print(
 def resume_print(
     printer_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)
 ):
+    printer = db.query(Printer).filter(Printer.id == printer_id).first()
+    if not printer:
+        raise HTTPException(404, "Drucker nicht gefunden")
+    if printer.connection_mode == "octoprint":
+        from app.services.octoprint_service import octoprint_manager
+        client = octoprint_manager.get(printer_id)
+        if not client:
+            raise HTTPException(400, "OctoPrint nicht verbunden")
+        return {"success": client.resume()}
     client = bambu_manager.get(printer_id)
     if not client:
         raise HTTPException(400, "Drucker nicht verbunden")
@@ -165,10 +205,85 @@ def resume_print(
 def stop_print(
     printer_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)
 ):
+    printer = db.query(Printer).filter(Printer.id == printer_id).first()
+    if not printer:
+        raise HTTPException(404, "Drucker nicht gefunden")
+    if printer.connection_mode == "octoprint":
+        from app.services.octoprint_service import octoprint_manager
+        client = octoprint_manager.get(printer_id)
+        if not client:
+            raise HTTPException(400, "OctoPrint nicht verbunden")
+        return {"success": client.cancel()}
     client = bambu_manager.get(printer_id)
     if not client:
         raise HTTPException(400, "Drucker nicht verbunden")
     return {"success": client.stop_print()}
+
+
+# ============ OctoPrint-spezifische Endpoints ============
+
+@router.get("/{printer_id}/octoprint/files")
+def list_octoprint_files(
+    printer_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    printer = db.query(Printer).filter(Printer.id == printer_id).first()
+    if not printer or printer.connection_mode != "octoprint":
+        raise HTTPException(400, "Nur für OctoPrint-Drucker verfügbar")
+    from app.services.octoprint_service import octoprint_manager
+    client = octoprint_manager.get(printer_id)
+    if not client:
+        _register_printer_mqtt(printer, db)
+        client = octoprint_manager.get(printer_id)
+    if not client:
+        raise HTTPException(400, "OctoPrint nicht erreichbar")
+    return {"files": client.list_files()}
+
+
+@router.post("/{printer_id}/octoprint/upload")
+async def upload_octoprint_file(
+    printer_id: int,
+    file: UploadFile = File(...),
+    print_now: bool = False,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    printer = db.query(Printer).filter(Printer.id == printer_id).first()
+    if not printer or printer.connection_mode != "octoprint":
+        raise HTTPException(400, "Nur für OctoPrint-Drucker verfügbar")
+    from app.services.octoprint_service import octoprint_manager
+    client = octoprint_manager.get(printer_id)
+    if not client:
+        _register_printer_mqtt(printer, db)
+        client = octoprint_manager.get(printer_id)
+    if not client:
+        raise HTTPException(400, "OctoPrint nicht erreichbar")
+    content = await file.read()
+    ok, result = client.upload_file(content, file.filename or "upload.gcode", print_now)
+    if not ok:
+        raise HTTPException(400, f"Upload fehlgeschlagen: {result}")
+    return {"success": True, "path": result, "filename": file.filename, "print_started": print_now}
+
+
+@router.post("/{printer_id}/octoprint/print")
+def start_octoprint_print(
+    printer_id: int,
+    file_path: str = Body(..., embed=True),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    printer = db.query(Printer).filter(Printer.id == printer_id).first()
+    if not printer or printer.connection_mode != "octoprint":
+        raise HTTPException(400, "Nur für OctoPrint-Drucker verfügbar")
+    from app.services.octoprint_service import octoprint_manager
+    client = octoprint_manager.get(printer_id)
+    if not client:
+        raise HTTPException(400, "OctoPrint nicht erreichbar")
+    ok = client.select_and_print(file_path, print_now=True)
+    if not ok:
+        raise HTTPException(400, "Druck konnte nicht gestartet werden")
+    return {"success": True}
 
 
 # ============ Wartungseinträge ============

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Plus, FileText, Edit2, Trash2, Calculator, Receipt, X, ArrowRight, Image as ImageIcon, Upload, Trash } from 'lucide-react'
 import api from '../services/api'
 import Modal from '../components/Modal'
@@ -33,7 +34,7 @@ export default function Jobs() {
   const [filterStatus, setFilterStatus] = useState('')
   const [calcModal, setCalcModal] = useState(null)
   const [calcConfig, setCalcConfig] = useState({ printer_id: '', filament_id: '' })
-  const [defaultVat, setDefaultVat] = useState(19)  // aus Firmendaten
+  const [defaultVat, setDefaultVat] = useState(19)
 
   // Inline-Kalkulation im Auftrag-Modal
   const [calcPrinterId, setCalcPrinterId] = useState('')
@@ -41,10 +42,10 @@ export default function Jobs() {
   const [calcLoading, setCalcLoading] = useState(false)
   const [calcError, setCalcError] = useState('')
 
-  // Foto-Upload
+  // Druckergebnis-Foto
   const [photoUploading, setPhotoUploading] = useState(false)
   const [photoError, setPhotoError] = useState('')
-  const [photoTimestamp, setPhotoTimestamp] = useState(Date.now())  // Cache-Buster
+  const [photoTimestamp, setPhotoTimestamp] = useState(Date.now())
 
   const load = async () => {
     const url = filterStatus ? `/jobs?status=${filterStatus}` : '/jobs'
@@ -67,6 +68,19 @@ export default function Jobs() {
   }
 
   useEffect(() => { load() }, [filterStatus])
+
+  // ?edit=ID URL-Parameter: automatisch Edit-Modal öffnen
+  const [searchParams, setSearchParams] = useSearchParams()
+  useEffect(() => {
+    const editId = searchParams.get('edit')
+    if (!editId || jobs.length === 0) return
+    const job = jobs.find((j) => String(j.id) === String(editId))
+    if (job) {
+      openEdit(job)
+      searchParams.delete('edit')
+      setSearchParams(searchParams, { replace: true })
+    }
+  }, [jobs, searchParams])
 
   const openNew = () => {
     setEditing(null)
@@ -173,8 +187,6 @@ export default function Jobs() {
   const totalReserved = filRows.reduce((s, r) => s + (parseFloat(r.grams_reserved) || 0), 0)
 
   // === Inline-Kalkulation im Auftrag-Modal ===
-  // Sammelt alle Filamente aus den Platten (oder filRows als Fallback)
-  // und ruft den Standalone-Calc-Endpoint auf
   const runInlineCalc = async () => {
     setCalcError('')
     setCalcResult(null)
@@ -182,7 +194,6 @@ export default function Jobs() {
       setCalcError('Bitte einen Drucker auswählen')
       return
     }
-    // Druckzeit: aus Platten oder estimated_hours
     const hours = plates.length > 0
       ? totalDuration
       : parseFloat(form.estimated_hours) || 0
@@ -190,10 +201,8 @@ export default function Jobs() {
       setCalcError('Bitte Druckzeit eintragen (entweder pro Platte oder als Schätzung)')
       return
     }
-    // Filamente sammeln: aus allen Platten oder aus filRows
     let filamentItems = []
     if (plates.length > 0) {
-      // Gleiche Filamente zusammenfassen
       const byId = {}
       for (const p of plates) {
         for (const f of p.filaments) {
@@ -229,7 +238,6 @@ export default function Jobs() {
     }
   }
 
-  // Übernimmt den berechneten Verkaufspreis ins Preis-Feld
   const applyCalcResult = () => {
     if (!calcResult) return
     const net = Math.round(calcResult.calculated_price_net * 100) / 100
@@ -250,7 +258,7 @@ export default function Jobs() {
         headers: { 'Content-Type': 'multipart/form-data' },
       })
       setForm({ ...form, result_photo_path: r.data.path })
-      setPhotoTimestamp(Date.now())  // erzwingt Neu-Laden des Bildes
+      setPhotoTimestamp(Date.now())
     } catch (e) {
       setPhotoError(e.response?.data?.detail || 'Upload fehlgeschlagen')
     } finally {
@@ -842,7 +850,7 @@ export default function Jobs() {
                 Sobald die Datei gedruckt wird, bekommt der Kunde automatisch eine E-Mail.
               </p>
             </div>
-            {/* Druckergebnis-Foto - nur beim Bearbeiten verfügbar */}
+            {/* Druckergebnis-Foto - nur beim Bearbeiten */}
             {editing && (
               <div className="col-span-2 border rounded-lg bg-gray-50 p-3">
                 <div className="flex items-center gap-2 mb-2">

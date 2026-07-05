@@ -9,6 +9,7 @@ import Filaments from './pages/Filaments'
 import Storage from './pages/Storage'
 import Customers from './pages/Customers'
 import Jobs from './pages/Jobs'
+import Calendar from './pages/Calendar'
 import Invoices from './pages/Invoices'
 import History from './pages/History'
 import Costs from './pages/Costs'
@@ -58,6 +59,7 @@ function AppRoutes() {
         <Route path="storage" element={<Storage />} />
         <Route path="customers" element={<Customers />} />
         <Route path="jobs" element={<Jobs />} />
+        <Route path="calendar" element={<Calendar />} />
         <Route path="invoices" element={<Invoices />} />
         <Route path="history" element={<History />} />
         <Route path="costs" element={<Costs />} />

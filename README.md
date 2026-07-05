@@ -4,9 +4,9 @@
 
 **Self-hosted Verwaltungssystem für 3D-Druckereien**
 
-Drucker-Monitoring, Materialverwaltung, Auftragsabwicklung und Buchhaltung – alles in einer Web-App.
+Multi-Drucker-Monitoring, Materialverwaltung, Auftragsabwicklung, Buchhaltung und Customer-Mailing – alles in einer Web-App.
 
-![Version](https://img.shields.io/badge/version-6.x-blue.svg)
+![Version](https://img.shields.io/badge/version-7.0-blue.svg)
 ![License](https://img.shields.io/badge/license-private-lightgrey.svg)
 ![Python](https://img.shields.io/badge/python-3.12-green.svg)
 ![React](https://img.shields.io/badge/react-18-61dafb.svg)
@@ -21,7 +21,7 @@ Drucker-Monitoring, Materialverwaltung, Auftragsabwicklung und Buchhaltung – a
 
 ## 📋 Über das Projekt
 
-PrintFarm Manager ist eine vollständige Self-Hosted-Lösung für den Betrieb einer kleinen bis mittleren 3D-Druckerei. Das System läuft im eigenen Netzwerk via Docker Compose, bindet **Bambu Lab Drucker** über die offizielle MQTT-API (LAN oder Cloud) ein, integriert **Tuya Smart Plugs** für Stromverbrauchsmessung und kümmert sich um alles drumherum – von der Material-Reservierung über Druckkalkulation bis zum automatisierten Rechnungsversand mit Kunden-Mailing.
+PrintFarm Manager ist eine vollständige Self-Hosted-Lösung für den Betrieb einer kleinen bis mittleren 3D-Druckerei. Das System läuft im eigenen Netzwerk via Docker Compose, bindet **Bambu Lab** (LAN/Cloud) und **OctoPrint-Drucker** ein, integriert **Tuya Smart Plugs** für Stromverbrauchsmessung und kümmert sich um alles drumherum – von der Material-Reservierung über Druckkalkulation bis zum automatisierten Rechnungsversand mit Kunden-Mailing.
 
 Entwickelt für **Kleinunternehmer**, **Hobby-Druckereien** und **kleine Werkstätten**, die ihre Druckaufträge professionell verwalten wollen, ohne auf SaaS-Lösungen angewiesen zu sein.
 
@@ -37,18 +37,36 @@ Entwickelt für **Kleinunternehmer**, **Hobby-Druckereien** und **kleine Werkst�
 - Auto-Refresh alle 30 Sekunden
 
 ### 🖨️ Druckerverwaltung
-- Mehrere Bambu Lab Drucker parallel
-- **LAN-Modus ODER Cloud-Modus** je Drucker wählbar
+- Mehrere Drucker parallel
+- **Drei Verbindungsmodi**:
+  - 📡 **Bambu LAN** - direkter Zugriff im Netzwerk
+  - ☁️ **Bambu Cloud** - über Bambu Cloud auch von außerhalb
+  - 🐙 **OctoPrint** - beliebige Drucker via OctoPrint-REST-API
 - Live-Status: Temperatur, Fortschritt, Restzeit, aktueller Job
 - Wartungshistorie mit Erinnerungen
-- RTSP-Kamera-Snapshot (P1/X1, LAN-Modus)
+- RTSP-Kamera-Snapshot (Bambu LAN-Modus)
 - Pro Drucker: Stundensatz, Strompreis, Marge
+
+### 🐙 OctoPrint-Integration
+- Live-Status via REST-Polling (15 Sekunden)
+- **Steuerung**: Pause, Fortsetzen, Abbrechen
+- **Datei-Upload** direkt aus PrintFarm zu OctoPrint
+- **Druck starten** aus der Datei-Liste
+- **Sofort drucken** nach Upload (Checkbox)
 
 ### ☁️ Bambu Cloud-Integration
 - Verifizierungscode-Flow direkt in PrintFarm (kein Bambu Studio nötig)
 - Token-Caching - einmal verifizieren, dann monatelang gültig
 - Automatische Region-Erkennung (EU/US/CN)
-- Funktioniert auch wenn der Drucker NICHT im LAN-Only-Mode ist
+- JWT-Parse mit `/my/profile` Fallback
+
+### 📅 Kalenderansicht
+- **Monats-** und **Wochenansicht** für Aufträge
+- Aufträge als bunte Karten an den Lieferterminen
+- **Drag & Drop**: Auftrag verschieben ändert `due_date` automatisch
+- **Sidebar "Ohne Liefertermin"** für ungeplante Aufträge
+- Klick auf Auftrag → direkt zum Edit-Modal
+- Status-Farben, überfällig-Indikator
 
 ### 🧵 Filamentverwaltung
 - Bestand pro Rolle mit Restmenge, Charge, Lagerort
@@ -156,7 +174,8 @@ Entwickelt für **Kleinunternehmer**, **Hobby-Druckereien** und **kleine Werkst�
 | **Icons** | Lucide React |
 | **PDF-Generierung** | ReportLab |
 | **Auth** | JWT-basiert (python-jose) |
-| **Drucker-API** | Bambu Lab MQTT (paho-mqtt), LAN + Cloud |
+| **Bambu-API** | MQTT (paho-mqtt), LAN + Cloud |
+| **OctoPrint-API** | REST (Polling) |
 | **Smart-Plug-API** | Tuya Cloud API v2.0 (eigener HTTP-Client) |
 | **Deployment** | Docker Compose |
 
@@ -166,7 +185,7 @@ Entwickelt für **Kleinunternehmer**, **Hobby-Druckereien** und **kleine Werkst�
 
 ### Voraussetzungen
 - Docker und Docker Compose
-- Bambu Lab Drucker (LAN-Modus oder Cloud-Account)
+- Bambu Lab Drucker (LAN-Modus oder Cloud-Account) oder OctoPrint-Drucker
 - Optional: Tuya Smart Plug
 - Optional: SMTP-Server
 
@@ -198,8 +217,8 @@ sudo docker compose up -d --build
 3. **SMTP-Server** konfigurieren (Verwaltung → E-Mail-Server)
 4. **Integrationen** für Tuya / Bambu Cloud konfigurieren
 5. **E-Mail-Texte** anpassen (Verwaltung → E-Mail-Texte)
-6. **Drucker** anlegen (Drucker → Übersicht → Neu)
-7. **Admin-Passwort ändern** (Klick auf eigenen Namen unten links)
+6. **Drucker** anlegen (Bambu LAN/Cloud oder OctoPrint)
+7. **Admin-Passwort ändern**
 
 Detaillierte Anleitung: siehe [INSTALLATION.md](INSTALLATION.md)
 
@@ -209,28 +228,42 @@ Detaillierte Anleitung: siehe [INSTALLATION.md](INSTALLATION.md)
 
 ```
 printfarm/
-├── backend/                    # FastAPI Backend
+├── backend/                          # FastAPI Backend
 │   ├── app/
-│   │   ├── api/                # API-Endpoints
-│   │   ├── models/             # SQLAlchemy-Modelle
-│   │   ├── services/           # Bambu, Tuya, Mail, PDF, ...
-│   │   ├── core/               # Auth, DB, Config
+│   │   ├── api/                      # API-Endpoints
+│   │   │   ├── customers.py          # Kunden, Aufträge, Kalender, Foto-Upload
+│   │   │   ├── printers.py           # Drucker + OctoPrint-Endpoints
+│   │   │   ├── email_templates.py    # E-Mail-Templates Verwaltung
+│   │   │   └── ...
+│   │   ├── models/                   # SQLAlchemy-Modelle
+│   │   │   ├── email_template.py     # Editierbare Templates
+│   │   │   └── ...
+│   │   ├── services/
+│   │   │   ├── bambu_service.py      # Bambu MQTT (LAN + Cloud)
+│   │   │   ├── octoprint_service.py  # OctoPrint REST + Polling
+│   │   │   ├── notifier.py           # Mail-System + Status-Templates
+│   │   │   ├── tuya_service.py       # Tuya v2.0 API
+│   │   │   └── ...
 │   │   └── main.py
-│   ├── Dockerfile
-│   └── requirements.txt
-├── frontend/                   # React Frontend
+│   └── Dockerfile
+├── frontend/                         # React Frontend
 │   ├── src/
-│   │   ├── pages/              # Dashboard, Drucker, Aufträge, ...
-│   │   ├── components/         # Layout, Modal, ProtectedRoute
-│   │   ├── services/           # API-Client, Auth-Context
+│   │   ├── pages/
+│   │   │   ├── Dashboard.jsx
+│   │   │   ├── Printers.jsx          # 3-Wege-Toggle LAN/Cloud/OctoPrint
+│   │   │   ├── PrinterDetail.jsx     # Mit OctoPrint-Steuerung
+│   │   │   ├── Jobs.jsx              # Inline-Kalkulator + Photo-Upload
+│   │   │   ├── Calendar.jsx          # Kalenderansicht mit Drag&Drop
+│   │   │   ├── EmailTemplates.jsx    # Templates editieren
+│   │   │   └── ...
+│   │   ├── components/               # Layout, Modal, ProtectedRoute
 │   │   └── App.jsx
-│   ├── Dockerfile
-│   └── package.json
+│   └── Dockerfile
 ├── docker-compose.yml
-├── backup.sh                   # CLI-Backup-Skript
-├── restore.sh                  # CLI-Restore-Skript
+├── backup.sh                         # CLI-Backup-Skript
+├── restore.sh                        # CLI-Restore-Skript
 ├── .env.example
-├── INSTALLATION.md             # Detaillierte Install-Anleitung
+├── INSTALLATION.md
 └── README.md
 ```
 
@@ -241,9 +274,9 @@ printfarm/
 Mögliche Erweiterungen für künftige Versionen:
 
 - [ ] Mehrsprachigkeit (EN/DE umschaltbar)
-- [ ] OctoPrint-Integration (zusätzlich zu Bambu Lab)
+- [x] ~~OctoPrint-Integration~~ ✅ Erledigt in v7.0
+- [x] ~~Kalenderansicht für Aufträge mit Drag&Drop~~ ✅ Erledigt in v7.0
 - [ ] Bestell-System für Endkunden (Kunden laden STL hoch + Live-Preis)
-- [ ] Kalenderansicht für Aufträge mit Drag&Drop
 - [ ] PWA mit Offline-Support und Push-Notifications
 - [ ] 2FA für Login
 - [ ] Erweiterte Statistiken (Profitabilität pro Kunde, Material-Trends)
@@ -257,6 +290,11 @@ Mögliche Erweiterungen für künftige Versionen:
 ### Bambu Lab
 - **LAN-Modus**: Drucker im LAN-Only-Mode am Drucker aktivieren. Access Code unter Einstellungen → WLAN → Show Detail.
 - **Cloud-Modus**: Bambu-Account-Daten in Verwaltung → Integrationen eintragen, Verifizierungscode wird per Email versendet und in PrintFarm eingegeben.
+
+### OctoPrint
+- Beliebiger Drucker mit OctoPrint (RepRap, Marlin, Klipper, ...)
+- API-Key aus **OctoPrint → Einstellungen → API** kopieren
+- URL inkl. Protokoll (`http://192.168.1.50` oder `http://octopi.local`)
 
 ### Tuya Smart Plugs
 - Tuya IoT Developer Account erforderlich (kostenlos für Eigennutzung)
@@ -276,8 +314,10 @@ Mögliche Erweiterungen für künftige Versionen:
 
 - **Bambu P1 Camera (LAN):** Firmware blockiert RTSP-Stream oft → manueller Foto-Upload als Lösung eingebaut
 - **Bambu Cloud Camera:** Aktuell nicht implementiert
-- **Mehrere parallele Aufträge:** Kunden-Mail-Matching am besten via `print_file_name` (eindeutiger Dateiname)
+- **OctoPrint Kamera:** Nicht eingebunden - manueller Foto-Upload wie bei Bambu
+- **OctoPrint Layer-Info:** Standardmäßig nicht verfügbar (nur bei Plugin)
 - **Tuya Trial:** Abo muss alle 6 Monate manuell verlängert werden
+- **Touch-Drag&Drop im Kalender:** Auf Mobilgeräten eingeschränkt, alternative: Auftrag anklicken
 
 ---
 

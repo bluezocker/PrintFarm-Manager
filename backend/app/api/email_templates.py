@@ -34,9 +34,7 @@ def list_templates(
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
 ):
-    """Alle Templates zurückgeben. Seed fehlende Defaults automatisch."""
     seed_default_email_templates(db)
-    # Stabile Reihenfolge wie im Status-Lifecycle
     order = ["new", "in_progress", "printing", "completed", "paid", "cancelled"]
     templates = db.query(EmailTemplate).all()
     templates.sort(key=lambda t: order.index(t.status_key) if t.status_key in order else 99)
@@ -66,7 +64,6 @@ def reset_template(
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
 ):
-    """Setzt ein Template auf die Default-Werte zurück."""
     t = db.query(EmailTemplate).filter(EmailTemplate.id == template_id).first()
     if not t:
         raise HTTPException(404, "Template nicht gefunden")
@@ -88,7 +85,6 @@ def preview_template(
     db: Session = Depends(get_db),
     _: User = Depends(require_admin),
 ):
-    """Liefert eine gerenderte Vorschau mit Beispielwerten."""
     t = db.query(EmailTemplate).filter(EmailTemplate.id == template_id).first()
     if not t:
         raise HTTPException(404, "Template nicht gefunden")

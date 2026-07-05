@@ -53,7 +53,7 @@ export default function EmailTemplates() {
   }
 
   const reset = async (t) => {
-    if (!confirm(`Möchtest du "${t.label}" wirklich auf die Standardwerte zurücksetzen?`)) return
+    if (!confirm(`"${t.label}" wirklich auf Standard zurücksetzen?`)) return
     setSavingId(t.id)
     try {
       const r = await api.post(`/email-templates/${t.id}/reset`)
@@ -87,18 +87,13 @@ export default function EmailTemplates() {
       </div>
 
       {message && (
-        <div
-          className={`p-3 rounded-md text-sm mb-4 ${
-            message.type === 'success'
-              ? 'bg-green-50 text-green-800 border border-green-200'
-              : 'bg-red-50 text-red-800 border border-red-200'
-          }`}
-        >
-          {message.text}
-        </div>
+        <div className={`p-3 rounded-md text-sm mb-4 ${
+          message.type === 'success'
+            ? 'bg-green-50 text-green-800 border border-green-200'
+            : 'bg-red-50 text-red-800 border border-red-200'
+        }`}>{message.text}</div>
       )}
 
-      {/* Platzhalter-Erklärung */}
       <div className="card mb-6 bg-blue-50 border-blue-200">
         <div className="flex items-start gap-3">
           <Info className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
@@ -152,7 +147,6 @@ export default function EmailTemplates() {
                   onChange={(e) => updateField(t.id, 'subject', e.target.value)}
                 />
               </div>
-
               <div>
                 <label className="label text-xs">Text</label>
                 <textarea
@@ -165,67 +159,43 @@ export default function EmailTemplates() {
             </div>
 
             <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t">
-              <button
-                onClick={() => save(t)}
-                disabled={savingId === t.id}
-                className="btn-primary flex items-center gap-2 text-sm disabled:opacity-50"
-              >
+              <button onClick={() => save(t)} disabled={savingId === t.id}
+                className="btn-primary flex items-center gap-2 text-sm disabled:opacity-50">
                 <Save className="w-4 h-4" />
                 {savingId === t.id ? 'Speichert...' : 'Speichern'}
               </button>
-              <button
-                onClick={() => preview(t)}
-                className="btn-secondary flex items-center gap-2 text-sm"
-              >
-                <Eye className="w-4 h-4" />
-                Vorschau
+              <button onClick={() => preview(t)} className="btn-secondary flex items-center gap-2 text-sm">
+                <Eye className="w-4 h-4" /> Vorschau
               </button>
-              <button
-                onClick={() => reset(t)}
-                disabled={savingId === t.id}
+              <button onClick={() => reset(t)} disabled={savingId === t.id}
                 className="btn-secondary flex items-center gap-2 text-sm text-gray-600 disabled:opacity-50"
-                title="Auf Standard-Text zurücksetzen"
-              >
-                <RotateCcw className="w-4 h-4" />
-                Zurücksetzen
+                title="Auf Standard-Text zurücksetzen">
+                <RotateCcw className="w-4 h-4" /> Zurücksetzen
               </button>
             </div>
           </div>
         ))}
       </div>
 
-      {/* Vorschau-Modal */}
       {previewData && (
-        <div
-          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
-          onClick={() => setPreviewData(null)}
-        >
-          <div
-            className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-auto"
-            onClick={(e) => e.stopPropagation()}
-          >
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+          onClick={() => setPreviewData(null)}>
+          <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-auto"
+            onClick={(e) => e.stopPropagation()}>
             <div className="p-6">
               <h3 className="text-lg font-bold mb-1">Vorschau: {previewData.label}</h3>
               <p className="text-xs text-gray-500 mb-4">Mit Beispielwerten ausgefüllt</p>
-
               <div className="mb-3">
                 <p className="text-xs text-gray-500 mb-1">Betreff</p>
-                <div className="bg-gray-50 p-3 rounded font-medium text-sm">
-                  {previewData.subject}
-                </div>
+                <div className="bg-gray-50 p-3 rounded font-medium text-sm">{previewData.subject}</div>
               </div>
-
               <div>
                 <p className="text-xs text-gray-500 mb-1">Text</p>
                 <div className="bg-gray-50 p-3 rounded text-sm whitespace-pre-wrap font-mono">
                   {previewData.body}
                 </div>
               </div>
-
-              <button
-                onClick={() => setPreviewData(null)}
-                className="btn-primary w-full mt-4"
-              >
+              <button onClick={() => setPreviewData(null)} className="btn-primary w-full mt-4">
                 Schließen
               </button>
             </div>

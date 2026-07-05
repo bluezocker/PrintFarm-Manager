@@ -52,6 +52,14 @@ def initialize():
         integ_for_bambu = db.query(IntegrationSettings).first()
 
         for p in db.query(Printer).all():
+            # OctoPrint
+            if p.connection_mode == "octoprint":
+                if p.octo_url and p.octo_api_key:
+                    logger.info(f"Verbinde Drucker {p.name} (OctoPrint)...")
+                    from app.services.octoprint_service import octoprint_manager
+                    octoprint_manager.register(p.id, p.octo_url, p.octo_api_key)
+                continue
+
             if not p.bambu_serial:
                 continue
             if p.connection_mode == "cloud":
