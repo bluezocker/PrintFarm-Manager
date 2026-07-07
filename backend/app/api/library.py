@@ -3,13 +3,15 @@
 Ermöglicht Upload, Verwaltung und Direkt-Druck von 3MF/G-Code Dateien.
 """
 import io
+import re
 import zipfile
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Body
-from fastapi.responses import FileResponse, Response
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
@@ -17,6 +19,8 @@ from app.core.database import get_db
 from app.core.config import settings
 from app.core.security import get_current_user
 from app.models import LibraryFile, User
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/library", tags=["library"])
 
@@ -65,12 +69,75 @@ def _thumbnail_dir() -> Path:
     return d
 
 
+def _find_thumbnail_in_3mf(z: zipfile.ZipFile) -> Optional[bytes]:
+    """Findet das Thumbnail im 3MF (ZIP).
+
+    Bambu Studio, OrcaSlicer, Prusa Slicer, Cura und weitere verwenden
+    unterschiedliche Konventionen. Wir gehen die häufigsten Pfade
+    priorisiert durch und fallen dann auf jede beliebige .png zurück.
+    """
+    all_names = z.namelist()
+    # Case-insensitive lookup
+    lower_map = {n.lower(): n for n in all_names}
+
+    # Priorisierte Kandidaten - erste Wahl: großes Plate-Thumbnail
+    priority = [
+        "metadata/plate_1.png",
+        "metadata/plate_1_small.png",
+        "metadata/plate_no_light_1.png",
+        "metadata/top_1.png",
+        "metadata/pick_1.png",
+        "metadata/thumbnail.png",
+        "3d/thumbnail.png",
+        "thumbnail.png",
+        # Prusa Slicer
+        "metadata/thumbnail_1.png",
+        # Cura
+        "thumbnails/thumbnail.png",
+    ]
+    for candidate in priority:
+        if candidate in lower_map:
+            try:
+                data = z.read(lower_map[candidate])
+                if data and len(data) > 100:  # Muss zumindest ein bisschen was sein
+                    logger.info(f"3MF thumbnail gefunden: {lower_map[candidate]} ({len(data)} bytes)")
+                    return data
+            except Exception as e:
+                logger.warning(f"Kann {candidate} nicht lesen: {e}")
+
+    # Fallback 1: Jede PNG mit "thumb", "plate" oder "preview" im Namen
+    for name in all_names:
+        low = name.lower()
+        if not low.endswith(".png"):
+            continue
+        if any(kw in low for kw in ["thumb", "plate", "preview", "top", "pick"]):
+            try:
+                data = z.read(name)
+                if data and len(data) > 100:
+                    logger.info(f"3MF thumbnail (fallback keyword): {name} ({len(data)} bytes)")
+                    return data
+            except Exception:
+                continue
+
+    # Fallback 2: Erste beliebige PNG im Archiv
+    for name in all_names:
+        if name.lower().endswith(".png"):
+            try:
+                data = z.read(name)
+                if data and len(data) > 100:
+                    logger.info(f"3MF thumbnail (fallback any png): {name} ({len(data)} bytes)")
+                    return data
+            except Exception:
+                continue
+
+    logger.info(f"Kein Thumbnail in 3MF gefunden. Vorhandene Dateien: {all_names[:20]}")
+    return None
+
+
 def _extract_3mf_metadata(file_bytes: bytes) -> dict:
     """Extrahiert Metadaten und Thumbnail aus einer 3MF-Datei.
 
-    3MF ist ein ZIP-Container. Der Bambu-Slicer legt darin:
-    - Metadata/plate_1.png (Thumbnail)
-    - Metadata/slice_info.config (XML mit Druckzeit, Material, ...)
+    3MF ist ein ZIP-Container mit verschiedenen Metadata-Dateien.
     """
     result = {
         "thumbnail_bytes": None,
@@ -83,49 +150,48 @@ def _extract_3mf_metadata(file_bytes: bytes) -> dict:
         with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
             names = z.namelist()
 
-            # Thumbnail suchen (verschiedene mögliche Pfade)
-            thumb_candidates = [
-                "Metadata/plate_1.png",
-                "Metadata/plate_no_light_1.png",
-                "Metadata/top_1.png",
-                "3D/thumbnail.png",
-            ]
-            for candidate in thumb_candidates:
-                if candidate in names:
-                    result["thumbnail_bytes"] = z.read(candidate)
-                    break
+            # Thumbnail suchen
+            result["thumbnail_bytes"] = _find_thumbnail_in_3mf(z)
 
-            # Wenn nix gefunden: erste .png nehmen
-            if not result["thumbnail_bytes"]:
-                for name in names:
-                    if name.lower().endswith(".png") and "thumb" in name.lower():
-                        result["thumbnail_bytes"] = z.read(name)
-                        break
-
-            # slice_info.config - XML mit Slice-Metadaten
-            slice_config_names = [n for n in names if n.endswith("slice_info.config")]
+            # slice_info.config - XML mit Slice-Metadaten (Bambu Studio / OrcaSlicer)
+            slice_config_names = [n for n in names if n.lower().endswith("slice_info.config")]
             if slice_config_names:
-                content = z.read(slice_config_names[0]).decode("utf-8", errors="ignore")
-                # Regex-Extraktion für relevante Felder
-                import re
-                # Druckzeit in Sekunden
-                m = re.search(r'prediction[^0-9]*(\d+)', content)
-                if m:
-                    result["estimated_time_minutes"] = int(int(m.group(1)) / 60)
-                # Material in Gramm
-                m = re.search(r'weight[^0-9]*([\d.]+)', content)
-                if m:
-                    result["estimated_material_g"] = float(m.group(1))
-                # Layer height
-                m = re.search(r'layer_height[^\d]*([\d.]+)', content)
-                if m:
-                    result["layer_height"] = float(m.group(1))
-                # Nozzle diameter
-                m = re.search(r'nozzle_diameter[^\d]*([\d.]+)', content)
-                if m:
-                    result["nozzle_diameter"] = float(m.group(1))
-    except Exception:
-        pass  # Fehler ignorieren - Datei ist eventuell keine 3MF
+                try:
+                    content = z.read(slice_config_names[0]).decode("utf-8", errors="ignore")
+                    # Druckzeit in Sekunden (mehrere mögliche Keys)
+                    m = re.search(r'(?:prediction|estimated_time)[^0-9]*(\d+)', content)
+                    if m:
+                        result["estimated_time_minutes"] = int(int(m.group(1)) / 60)
+                    # Material in Gramm
+                    m = re.search(r'(?:weight|filament_weight)[^0-9]*([\d.]+)', content)
+                    if m:
+                        result["estimated_material_g"] = float(m.group(1))
+                    # Layer height
+                    m = re.search(r'layer_height[^\d]*([\d.]+)', content)
+                    if m:
+                        result["layer_height"] = float(m.group(1))
+                    # Nozzle diameter
+                    m = re.search(r'nozzle_diameter[^\d]*([\d.]+)', content)
+                    if m:
+                        result["nozzle_diameter"] = float(m.group(1))
+                except Exception as e:
+                    logger.warning(f"slice_info.config parse fehler: {e}")
+
+            # Alternative: project_settings.config (auch Bambu)
+            if not result["estimated_time_minutes"]:
+                proj_names = [n for n in names if n.lower().endswith("project_settings.config")]
+                if proj_names:
+                    try:
+                        content = z.read(proj_names[0]).decode("utf-8", errors="ignore")
+                        m = re.search(r'"?prediction"?\s*:\s*"?(\d+)', content)
+                        if m:
+                            result["estimated_time_minutes"] = int(int(m.group(1)) / 60)
+                    except Exception:
+                        pass
+    except zipfile.BadZipFile:
+        logger.warning("Datei ist keine gültige ZIP-Datei (3MF)")
+    except Exception as e:
+        logger.warning(f"3MF-Extraktion fehlgeschlagen: {e}")
     return result
 
 
@@ -188,6 +254,7 @@ async def upload_file(
     stored_filename = f"{timestamp}_{safe_name}{ext}"
     target = _library_dir() / stored_filename
     target.write_bytes(content)
+    logger.info(f"Library: gespeichert {stored_filename} ({len(content)} bytes)")
 
     # Metadaten aus 3MF extrahieren
     thumbnail_path = None
@@ -198,6 +265,9 @@ async def upload_file(
             thumb_path = _thumbnail_dir() / f"{timestamp}_{safe_name}.png"
             thumb_path.write_bytes(metadata["thumbnail_bytes"])
             thumbnail_path = str(thumb_path)
+            logger.info(f"Library: Thumbnail gespeichert unter {thumb_path}")
+        else:
+            logger.warning(f"Library: Kein Thumbnail in {filename} gefunden")
 
     entry = LibraryFile(
         filename=filename,
@@ -252,7 +322,6 @@ def delete_file(
     f = db.query(LibraryFile).filter(LibraryFile.id == file_id).first()
     if not f:
         raise HTTPException(404, "Datei nicht gefunden")
-    # Physisch löschen
     for p in [f.stored_path, f.thumbnail_path]:
         if p and Path(p).exists():
             try:
@@ -293,13 +362,60 @@ def get_thumbnail(
     return FileResponse(p, media_type="image/png")
 
 
+@router.post("/{file_id}/regenerate-thumbnail")
+def regenerate_thumbnail(
+    file_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Extrahiert das Thumbnail nochmal aus der Original-Datei.
+
+    Nützlich für Dateien die vor einer Verbesserung des Extraktors hochgeladen wurden.
+    """
+    f = db.query(LibraryFile).filter(LibraryFile.id == file_id).first()
+    if not f:
+        raise HTTPException(404, "Datei nicht gefunden")
+    if f.file_type != "3mf":
+        raise HTTPException(400, "Nur für 3MF-Dateien verfügbar")
+
+    p = Path(f.stored_path)
+    if not p.exists():
+        raise HTTPException(404, "Original-Datei nicht auf Server")
+
+    metadata = _extract_3mf_metadata(p.read_bytes())
+    if not metadata.get("thumbnail_bytes"):
+        raise HTTPException(400, "Kein Thumbnail in der Datei gefunden")
+
+    # Neuen Thumbnail-Pfad
+    stem = Path(f.stored_path).stem
+    thumb_path = _thumbnail_dir() / f"{stem}.png"
+    thumb_path.write_bytes(metadata["thumbnail_bytes"])
+
+    # Alten löschen wenn anderer Pfad
+    if f.thumbnail_path and f.thumbnail_path != str(thumb_path):
+        old = Path(f.thumbnail_path)
+        if old.exists():
+            try:
+                old.unlink()
+            except Exception:
+                pass
+
+    f.thumbnail_path = str(thumb_path)
+    # Metadaten auch aktualisieren
+    if metadata.get("estimated_time_minutes"):
+        f.estimated_time_minutes = metadata["estimated_time_minutes"]
+    if metadata.get("estimated_material_g"):
+        f.estimated_material_g = metadata["estimated_material_g"]
+    db.commit()
+    return {"success": True, "thumbnail_path": str(thumb_path)}
+
+
 @router.post("/{file_id}/mark-used")
 def mark_used(
     file_id: int,
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
-    """Wird beim Direkt-Druck vom Frontend gerufen um Statistiken zu erhöhen."""
     f = db.query(LibraryFile).filter(LibraryFile.id == file_id).first()
     if not f:
         raise HTTPException(404, "Datei nicht gefunden")

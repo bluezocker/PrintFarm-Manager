@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   Upload, Search, Trash2, Download, Edit2, X, Clock, Package,
-  Layers, FileText, Filter, Tag, Grid, List as ListIcon, ChevronDown,
+  FileText, Grid, List as ListIcon, RefreshCw,
 } from 'lucide-react'
 import api from '../services/api'
 import Modal from '../components/Modal'
@@ -29,9 +29,43 @@ function formatMinutes(min) {
   return h ? `${h}h ${m}min` : `${m}min`
 }
 
-function formatDate(iso) {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleDateString('de-DE')
+// =========================================================================
+// ThumbnailImg - lädt das Bild über axios (mit Auth-Header)
+// Verhindert das Problem, dass <img src> keine JWT-Header sendet
+// =========================================================================
+function ThumbnailImg({ fileId, alt = '', className = '', refreshKey }) {
+  const [url, setUrl] = useState(null)
+  const [error, setError] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    let currentUrl = null
+    setError(false)
+
+    api.get(`/library/${fileId}/thumbnail`, { responseType: 'blob' })
+      .then((r) => {
+        if (cancelled) return
+        currentUrl = URL.createObjectURL(r.data)
+        setUrl(currentUrl)
+      })
+      .catch(() => {
+        if (!cancelled) setError(true)
+      })
+
+    return () => {
+      cancelled = true
+      if (currentUrl) URL.revokeObjectURL(currentUrl)
+    }
+  }, [fileId, refreshKey])
+
+  if (error || !url) {
+    return (
+      <div className={`flex items-center justify-center bg-gray-100 text-gray-300 ${className}`}>
+        <FileText className="w-1/3 h-1/3" />
+      </div>
+    )
+  }
+  return <img src={url} alt={alt} className={className} />
 }
 
 export default function Library() {
@@ -40,9 +74,10 @@ export default function Library() {
   const [error, setError] = useState(null)
   const [search, setSearch] = useState('')
   const [category, setCategory] = useState('')
-  const [view, setView] = useState('grid')     // 'grid' | 'list'
+  const [view, setView] = useState('grid')
   const [uploadOpen, setUploadOpen] = useState(false)
   const [editingFile, setEditingFile] = useState(null)
+  const [regenerating, setRegenerating] = useState(null)
 
   const load = async () => {
     setLoading(true)
@@ -62,7 +97,6 @@ export default function Library() {
 
   useEffect(() => { load() }, [category])
 
-  // Debounced search
   useEffect(() => {
     const t = setTimeout(() => load(), 400)
     return () => clearTimeout(t)
@@ -89,6 +123,19 @@ export default function Library() {
       URL.revokeObjectURL(url)
     } catch (e) {
       alert('Download fehlgeschlagen')
+    }
+  }
+
+  const regenerateThumbnail = async (file) => {
+    setRegenerating(file.id)
+    try {
+      await api.post(`/library/${file.id}/regenerate-thumbnail`)
+      // Datei neu laden aus dem Server
+      await load()
+    } catch (e) {
+      alert(e.response?.data?.detail || 'Thumbnail konnte nicht generiert werden')
+    } finally {
+      setRegenerating(null)
     }
   }
 
@@ -170,9 +217,23 @@ export default function Library() {
           </button>
         </div>
       ) : view === 'grid' ? (
-        <GridView files={files} onEdit={setEditingFile} onDelete={del} onDownload={download} />
+        <GridView
+          files={files}
+          onEdit={setEditingFile}
+          onDelete={del}
+          onDownload={download}
+          onRegenerateThumbnail={regenerateThumbnail}
+          regenerating={regenerating}
+        />
       ) : (
-        <ListView files={files} onEdit={setEditingFile} onDelete={del} onDownload={download} />
+        <ListView
+          files={files}
+          onEdit={setEditingFile}
+          onDelete={del}
+          onDownload={download}
+          onRegenerateThumbnail={regenerateThumbnail}
+          regenerating={regenerating}
+        />
       )}
 
       {uploadOpen && (
@@ -200,24 +261,34 @@ export default function Library() {
 }
 
 // =========================================================================
-// Grid View - Kachel-Ansicht
+// Grid View
 // =========================================================================
-function GridView({ files, onEdit, onDelete, onDownload }) {
+function GridView({ files, onEdit, onDelete, onDownload, onRegenerateThumbnail, regenerating }) {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
       {files.map((file) => (
         <div key={file.id} className="card !p-0 overflow-hidden group hover:shadow-md transition-shadow">
-          {/* Thumbnail */}
           <div className="aspect-square bg-gray-100 relative">
             {file.has_thumbnail ? (
-              <img
-                src={`/api/library/${file.id}/thumbnail`}
-                alt=""
+              <ThumbnailImg
+                fileId={file.id}
+                alt={file.display_name || file.filename}
                 className="w-full h-full object-contain"
               />
             ) : (
-              <div className="flex items-center justify-center h-full text-gray-300">
+              <div className="flex items-center justify-center h-full text-gray-300 flex-col gap-1">
                 <FileText className="w-12 h-12" />
+                {file.file_type === '3mf' && (
+                  <button
+                    onClick={() => onRegenerateThumbnail(file)}
+                    disabled={regenerating === file.id}
+                    className="text-[10px] text-primary-600 hover:underline flex items-center gap-1"
+                    title="Thumbnail neu extrahieren"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${regenerating === file.id ? 'animate-spin' : ''}`} />
+                    Thumbnail
+                  </button>
+                )}
               </div>
             )}
             <div className="absolute top-1 right-1 bg-gray-800/80 text-white text-[10px] px-1.5 py-0.5 rounded uppercase">
@@ -225,7 +296,6 @@ function GridView({ files, onEdit, onDelete, onDownload }) {
             </div>
           </div>
 
-          {/* Info */}
           <div className="p-2">
             <h3 className="font-medium text-sm truncate" title={file.display_name || file.filename}>
               {file.display_name || file.filename}
@@ -273,7 +343,7 @@ function GridView({ files, onEdit, onDelete, onDownload }) {
 // =========================================================================
 // List View
 // =========================================================================
-function ListView({ files, onEdit, onDelete, onDownload }) {
+function ListView({ files, onEdit, onDelete, onDownload, onRegenerateThumbnail, regenerating }) {
   return (
     <div className="card !p-0 overflow-x-auto">
       <table className="w-full text-sm">
@@ -286,7 +356,7 @@ function ListView({ files, onEdit, onDelete, onDownload }) {
             <th className="text-right px-3 py-2 font-medium text-gray-600 w-24">Zeit</th>
             <th className="text-right px-3 py-2 font-medium text-gray-600 w-24">Material</th>
             <th className="text-left px-3 py-2 font-medium text-gray-600 w-32">Kategorie</th>
-            <th className="text-right px-3 py-2 font-medium text-gray-600 w-32">Aktionen</th>
+            <th className="text-right px-3 py-2 font-medium text-gray-600 w-40">Aktionen</th>
           </tr>
         </thead>
         <tbody>
@@ -294,8 +364,10 @@ function ListView({ files, onEdit, onDelete, onDownload }) {
             <tr key={file.id} className="border-t hover:bg-gray-50">
               <td className="px-3 py-2">
                 {file.has_thumbnail ? (
-                  <img src={`/api/library/${file.id}/thumbnail`} alt=""
-                    className="w-10 h-10 object-contain bg-gray-100 rounded" />
+                  <ThumbnailImg
+                    fileId={file.id}
+                    className="w-10 h-10 object-contain bg-gray-100 rounded"
+                  />
                 ) : (
                   <div className="w-10 h-10 bg-gray-100 rounded flex items-center justify-center text-gray-300">
                     <FileText className="w-5 h-5" />
@@ -320,6 +392,16 @@ function ListView({ files, onEdit, onDelete, onDownload }) {
                 {CATEGORIES.find((c) => c.value === file.category)?.label || file.category || 'Allgemein'}
               </td>
               <td className="px-3 py-2 text-right whitespace-nowrap">
+                {!file.has_thumbnail && file.file_type === '3mf' && (
+                  <button
+                    onClick={() => onRegenerateThumbnail(file)}
+                    disabled={regenerating === file.id}
+                    className="text-gray-400 hover:text-primary-600 mr-2"
+                    title="Thumbnail neu extrahieren"
+                  >
+                    <RefreshCw className={`w-4 h-4 inline ${regenerating === file.id ? 'animate-spin' : ''}`} />
+                  </button>
+                )}
                 <button onClick={() => onDownload(file)} className="text-gray-400 hover:text-primary-600 mr-2" title="Download">
                   <Download className="w-4 h-4 inline" />
                 </button>
