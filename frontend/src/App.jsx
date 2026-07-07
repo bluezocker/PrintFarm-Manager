@@ -9,7 +9,8 @@ import Filaments from './pages/Filaments'
 import Storage from './pages/Storage'
 import Customers from './pages/Customers'
 import Jobs from './pages/Jobs'
-import Calendar from './pages/Calendar'
+import Library from './pages/Library'
+import QueuePage from './pages/Queue'
 import Invoices from './pages/Invoices'
 import History from './pages/History'
 import Costs from './pages/Costs'
@@ -26,7 +27,6 @@ import Company from './pages/Company'
 import Users from './pages/Users'
 import Profile from './pages/Profile'
 import Integrations from './pages/Integrations'
-import EmailTemplates from './pages/EmailTemplates'
 
 function ProtectedRoute({ children, adminOnly = false }) {
   const { user, loading } = useAuth()
@@ -59,7 +59,8 @@ function AppRoutes() {
         <Route path="storage" element={<Storage />} />
         <Route path="customers" element={<Customers />} />
         <Route path="jobs" element={<Jobs />} />
-        <Route path="calendar" element={<Calendar />} />
+        <Route path="library" element={<Library />} />
+        <Route path="queue" element={<QueuePage />} />
         <Route path="invoices" element={<Invoices />} />
         <Route path="history" element={<History />} />
         <Route path="costs" element={<Costs />} />
@@ -73,7 +74,6 @@ function AppRoutes() {
         <Route path="company" element={<ProtectedRoute adminOnly><Company /></ProtectedRoute>} />
         <Route path="smtp" element={<ProtectedRoute adminOnly><Smtp /></ProtectedRoute>} />
         <Route path="integrations" element={<ProtectedRoute adminOnly><Integrations /></ProtectedRoute>} />
-        <Route path="email-templates" element={<ProtectedRoute adminOnly><EmailTemplates /></ProtectedRoute>} />
         <Route path="users" element={<ProtectedRoute adminOnly><Users /></ProtectedRoute>} />
       </Route>
     </Routes>

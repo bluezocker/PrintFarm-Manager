@@ -1,8 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft, Plus, Wrench, RefreshCw, Camera, Mail, Play, Pause, Square, Upload, FileText, Trash2 } from 'lucide-react'
+import {
+  ArrowLeft, Plus, Wrench, RefreshCw, Camera, Mail,
+  Lightbulb, Home, Gauge, Wifi, Fan, Play, Pause, Square,
+  Package, Clock as ClockIcon, Layers,
+} from 'lucide-react'
 import api from '../services/api'
 import Modal from '../components/Modal'
+import AmsWidget from '../components/AmsWidget'
 
 export default function PrinterDetail() {
   const { id } = useParams()
@@ -15,6 +20,9 @@ export default function PrinterDetail() {
   const [jobs, setJobs] = useState([])
   const [snapshotUrl, setSnapshotUrl] = useState(null)
   const [snapshotLoading, setSnapshotLoading] = useState(false)
+  const [queue, setQueue] = useState([])
+  const [controlBusy, setControlBusy] = useState(false)
+  const [controlMessage, setControlMessage] = useState(null)
   const [form, setForm] = useState({
     date: new Date().toISOString().slice(0, 10),
     maintenance_type: '',
@@ -25,14 +33,44 @@ export default function PrinterDetail() {
   })
 
   const load = async () => {
-    const [p, m, j] = await Promise.all([
+    const [p, m, j, q] = await Promise.all([
       api.get(`/printers/${id}`),
       api.get(`/printers/${id}/maintenances`),
       api.get('/jobs?status=printing'),
+      api.get(`/queue/${id}`).catch(() => ({ data: [] })),
     ])
     setPrinter(p.data)
     setMaintenances(m.data)
     setJobs(j.data)
+    setQueue(q.data || [])
+  }
+
+  const loadQueue = async () => {
+    try {
+      const r = await api.get(`/queue/${id}`)
+      setQueue(r.data || [])
+    } catch {}
+  }
+
+  // === Drucker-Steuerung ===
+  const doControl = async (action, extraQuery = '') => {
+    setControlBusy(true)
+    setControlMessage(null)
+    try {
+      await api.post(`/printers/${id}/${action}${extraQuery}`)
+      setControlMessage({ type: 'success', text: `${action} ✓` })
+      setTimeout(refreshStatus, 500)
+    } catch (e) {
+      setControlMessage({ type: 'error', text: e.response?.data?.detail || `${action} fehlgeschlagen` })
+    } finally {
+      setControlBusy(false)
+      setTimeout(() => setControlMessage(null), 3000)
+    }
+  }
+
+  const toggleLed = () => {
+    const on = status?.light_status !== 'on'
+    doControl('led', `?on=${on}`)
   }
 
   const refreshSnapshot = async () => {
@@ -111,102 +149,246 @@ export default function PrinterDetail() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        {/* Live-Status */}
-        <div className="card">
-          <div className="flex justify-between items-center mb-4">
-            <h2 className="font-semibold flex items-center gap-2">
-              Live-Status
-              {status?.connected ? (
-                <span className="badge bg-green-100 text-green-800">Verbunden</span>
-              ) : (
-                <span className="badge bg-gray-100 text-gray-700">Offline</span>
-              )}
-            </h2>
-            <button onClick={refreshStatus} className="text-gray-500 hover:text-primary-600">
-              <RefreshCw className="w-4 h-4" />
-            </button>
-          </div>
-
-          {status?.connected ? (
-            <>
-              <div className="grid grid-cols-2 gap-4 mb-4">
-                <div>
-                  <p className="text-xs text-gray-500">Status</p>
-                  <p className="font-medium">{status.status}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-500">Job</p>
-                  <p className="font-medium truncate">{status.current_job_name || '—'}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-500">Düse</p>
-                  <p className="font-medium">{status.nozzle_temp?.toFixed(1)}°C</p>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-500">Bett</p>
-                  <p className="font-medium">{status.bed_temp?.toFixed(1)}°C</p>
-                </div>
-              </div>
-
-              {status.status === 'printing' && (
-                <>
-                  <div className="mb-2">
-                    <div className="flex justify-between text-sm mb-1">
-                      <span>Fortschritt</span>
-                      <span>{status.progress?.toFixed(1)}%</span>
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-2">
-                      <div className="bg-primary-600 h-2 rounded-full transition-all"
-                        style={{ width: `${status.progress}%` }} />
-                    </div>
-                  </div>
-                  {status.remaining_time != null && (
-                    <p className="text-sm text-gray-600 mb-3">
-                      Restzeit: {Math.floor(status.remaining_time / 60)}h {status.remaining_time % 60}m
-                    </p>
-                  )}
-                  {status.layer_num != null && (
-                    <p className="text-sm text-gray-600">
-                      Layer {status.layer_num} / {status.total_layer_num}
-                    </p>
-                  )}
-                </>
-              )}
-            </>
-          ) : (
-            <p className="text-gray-500 text-sm">
-              {status?.error || 'Nicht verbunden. Prüfe die Drucker-Konfiguration.'}
-            </p>
-          )}
+      {/* === Erweiterter Live-Bereich === */}
+      <div className="card mb-6">
+        {/* Status-Header mit Widgets */}
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="font-semibold flex items-center gap-2">
+            Live-Status
+            {status?.connected ? (
+              <span className="badge bg-green-100 text-green-800">Verbunden</span>
+            ) : (
+              <span className="badge bg-gray-100 text-gray-700">Offline</span>
+            )}
+            {status?.connected && status?.wifi_signal && (
+              <span className="badge bg-blue-50 text-blue-700 flex items-center gap-1">
+                <Wifi className="w-3 h-3" /> {status.wifi_signal}dBm
+              </span>
+            )}
+            {status?.connected && (
+              <>
+                <span className={`badge ${status.hms ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'}`}>
+                  {status.hms ? '⚠ HMS' : 'OK'}
+                </span>
+                {status.spd_lvl && (
+                  <span className="badge bg-purple-50 text-purple-700 flex items-center gap-1">
+                    <Gauge className="w-3 h-3" />
+                    {['Silent', 'Standard', 'Sport', 'Ludicrous'][status.spd_lvl - 1] || status.spd_lvl}
+                  </span>
+                )}
+              </>
+            )}
+          </h2>
+          <button onClick={refreshStatus} className="text-gray-500 hover:text-primary-600">
+            <RefreshCw className="w-4 h-4" />
+          </button>
         </div>
 
-        {printer.connection_mode === 'octoprint' && (
-          <OctoPrintControls
-            printerId={printer.id}
-            status={status}
-            onStatusUpdate={refreshStatus}
-          />
+        {controlMessage && (
+          <div className={`p-2 rounded text-sm mb-3 ${
+            controlMessage.type === 'success'
+              ? 'bg-green-50 text-green-800 border border-green-200'
+              : 'bg-red-50 text-red-800 border border-red-200'
+          }`}>{controlMessage.text}</div>
         )}
 
-        {/* Druckerinfo */}
+        {!status?.connected ? (
+          <p className="text-gray-500 text-sm">
+            {status?.error || 'Nicht verbunden. Prüfe Drucker-Konfiguration.'}
+          </p>
+        ) : (
+          <div className="space-y-4">
+            {/* Große Status-Zeile mit Fortschritt */}
+            <div className="border rounded-lg p-3 bg-gray-50">
+              <div className="flex items-start gap-3">
+                <div className="w-16 h-16 bg-white rounded flex items-center justify-center border">
+                  <Package className="w-8 h-8 text-gray-400" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between">
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold capitalize">
+                        {status.status === 'printing' ? 'Druckt' :
+                         status.status === 'paused' ? 'Pausiert' :
+                         status.status === 'idle' ? 'Idle' :
+                         status.status === 'finish' ? 'Fertig' :
+                         status.status === 'preparing' ? 'Vorbereitung' :
+                         status.status || 'Unbekannt'}
+                      </div>
+                      <div className="text-xs text-gray-500 truncate">
+                        {status.current_job_name || 'Kein aktiver Job'}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-lg font-bold text-primary-600">
+                        {status.progress != null ? `${status.progress.toFixed(1)}%` : '—'}
+                      </div>
+                    </div>
+                  </div>
+                  {status.status === 'printing' && (
+                    <>
+                      <div className="w-full bg-gray-200 rounded-full h-1.5 mt-2">
+                        <div className="bg-primary-500 h-1.5 rounded-full transition-all"
+                          style={{ width: `${status.progress || 0}%` }} />
+                      </div>
+                      <div className="flex items-center gap-3 text-xs text-gray-500 mt-1.5">
+                        {status.remaining_time != null && (
+                          <span className="flex items-center gap-1">
+                            <ClockIcon className="w-3 h-3" />
+                            Rest: {Math.floor(status.remaining_time / 60)}h {status.remaining_time % 60}m
+                          </span>
+                        )}
+                        {status.layer_num != null && (
+                          <span className="flex items-center gap-1">
+                            <Layers className="w-3 h-3" />
+                            Layer {status.layer_num}/{status.total_layer_num}
+                          </span>
+                        )}
+                      </div>
+                    </>
+                  )}
+                  {status.status !== 'printing' && (
+                    <div className="text-xs text-gray-400 mt-1">Druckbereit</div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Warteschlange-Widget */}
+            {queue.length > 0 && (
+              <Link to="/queue" className="block border rounded-lg p-3 hover:bg-gray-50 transition-colors">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-8 h-8 bg-purple-100 rounded flex items-center justify-center flex-shrink-0">
+                      📋
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-xs text-gray-500">Nächster in der Warteschlange</div>
+                      <div className="text-sm font-medium truncate">
+                        {queue[0].print_file_name || queue[0].title}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <span className="badge bg-blue-100 text-blue-800 flex items-center gap-1">
+                      <ClockIcon className="w-3 h-3" /> Wartend
+                    </span>
+                    {queue.length > 1 && (
+                      <span className="badge bg-gray-100 text-gray-800">+{queue.length - 1}</span>
+                    )}
+                  </div>
+                </div>
+              </Link>
+            )}
+
+            {/* Temperatur-Cards */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="border rounded-lg p-3 text-center bg-white">
+                <div className="text-xs text-gray-500 mb-1">Düse</div>
+                <div className="text-2xl font-bold">
+                  {status.nozzle_temp?.toFixed(0)}<span className="text-sm text-gray-500">°C</span>
+                </div>
+                {status.nozzle_target_temp > 0 && (
+                  <div className="text-xs text-gray-500">Ziel: {status.nozzle_target_temp}°C</div>
+                )}
+              </div>
+              <div className="border rounded-lg p-3 text-center bg-white">
+                <div className="text-xs text-gray-500 mb-1">Druckbett</div>
+                <div className="text-2xl font-bold">
+                  {status.bed_temp?.toFixed(0)}<span className="text-sm text-gray-500">°C</span>
+                </div>
+                {status.bed_target_temp > 0 && (
+                  <div className="text-xs text-gray-500">Ziel: {status.bed_target_temp}°C</div>
+                )}
+              </div>
+            </div>
+
+            {/* Lüfter-Anzeigen */}
+            <div className="grid grid-cols-3 gap-2 text-xs">
+              <FanBar label="Bauteil" value={status.cooling_fan_speed} />
+              <FanBar label="Aux" value={status.big_fan1_speed} />
+              <FanBar label="Kammer" value={status.big_fan2_speed} />
+            </div>
+
+            {/* Steuerungs-Leiste */}
+            <div>
+              <div className="text-xs text-gray-500 mb-2 uppercase tracking-wide">Steuerung</div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={toggleLed}
+                  disabled={controlBusy}
+                  className={`p-2 rounded border ${status.light_status === 'on'
+                    ? 'bg-yellow-100 border-yellow-300 text-yellow-700'
+                    : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'} disabled:opacity-50`}
+                  title="LED an/aus"
+                >
+                  <Lightbulb className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => doControl('home')}
+                  disabled={controlBusy || status.status === 'printing'}
+                  className="p-2 rounded border bg-white border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-30"
+                  title="Homing (G28)"
+                >
+                  <Home className="w-4 h-4" />
+                </button>
+                <div className="border-l h-6 mx-1"></div>
+                {status.status === 'printing' && (
+                  <button
+                    onClick={() => doControl('pause')}
+                    disabled={controlBusy}
+                    className="btn-secondary text-sm flex items-center gap-1 disabled:opacity-50"
+                  >
+                    <Pause className="w-4 h-4" /> Pausieren
+                  </button>
+                )}
+                {status.status === 'paused' && (
+                  <button
+                    onClick={() => doControl('resume')}
+                    disabled={controlBusy}
+                    className="btn-primary text-sm flex items-center gap-1 disabled:opacity-50"
+                  >
+                    <Play className="w-4 h-4" /> Fortsetzen
+                  </button>
+                )}
+                {(status.status === 'printing' || status.status === 'paused') && (
+                  <button
+                    onClick={() => {
+                      if (confirm('Druck wirklich abbrechen?')) doControl('stop')
+                    }}
+                    disabled={controlBusy}
+                    className="btn-secondary text-sm text-red-600 flex items-center gap-1 disabled:opacity-50"
+                  >
+                    <Square className="w-4 h-4" /> Stoppen
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* AMS-Widget */}
+            {(status.ams?.length > 0 || status.external_tray) && (
+              <div>
+                <div className="text-xs text-gray-500 mb-2 uppercase tracking-wide">Filamente</div>
+                <AmsWidget
+                  amsUnits={status.ams || []}
+                  externalTray={status.external_tray}
+                  trayNow={status.tray_now}
+                />
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        {/* Info-Card - kleiner als bisher */}
         <div className="card">
           <h2 className="font-semibold mb-4">Stammdaten</h2>
           <dl className="space-y-2 text-sm">
             <div className="flex justify-between"><dt className="text-gray-500">Marke</dt><dd>{printer.brand}</dd></div>
             <div className="flex justify-between"><dt className="text-gray-500">Modell</dt><dd>{printer.model || '—'}</dd></div>
             <div className="flex justify-between"><dt className="text-gray-500">Seriennummer</dt><dd>{printer.serial_number || '—'}</dd></div>
-            <div className="flex justify-between"><dt className="text-gray-500">Verbindung</dt><dd>
-              {printer.connection_mode === 'octoprint' ? '🐙 OctoPrint' :
-               printer.connection_mode === 'cloud' ? '☁️ Bambu Cloud' :
-               '📡 Bambu LAN'}
-            </dd></div>
-            {printer.connection_mode === 'octoprint' && printer.octo_url && (
-              <div className="flex justify-between"><dt className="text-gray-500">OctoPrint URL</dt><dd className="font-mono text-xs truncate max-w-[200px]" title={printer.octo_url}>{printer.octo_url}</dd></div>
-            )}
-            {printer.connection_mode !== 'octoprint' && (
-              <div className="flex justify-between"><dt className="text-gray-500">Bambu IP</dt><dd>{printer.bambu_ip || '—'}</dd></div>
-            )}
+            <div className="flex justify-between"><dt className="text-gray-500">Bambu IP</dt><dd>{printer.bambu_ip || '—'}</dd></div>
             <div className="flex justify-between"><dt className="text-gray-500">Tuya Plug</dt><dd>{printer.tuya_device_id ? '✓' : '—'}</dd></div>
             <div className="flex justify-between"><dt className="text-gray-500">Kaufdatum</dt><dd>{printer.purchase_date || '—'}</dd></div>
           </dl>
@@ -384,234 +566,18 @@ export default function PrinterDetail() {
 }
 
 
-// OctoPrint-Steuerung
-function OctoPrintControls({ printerId, status, onStatusUpdate }) {
-  const [files, setFiles] = useState([])
-  const [filesLoading, setFilesLoading] = useState(false)
-  const [filesOpen, setFilesOpen] = useState(false)
-  const [uploadOpen, setUploadOpen] = useState(false)
-  const [uploadFile, setUploadFile] = useState(null)
-  const [printNow, setPrintNow] = useState(true)
-  const [uploading, setUploading] = useState(false)
-  const [message, setMessage] = useState(null)
-  const [busy, setBusy] = useState(false)
-
-  const isPrinting = status?.status === 'printing'
-  const isPaused = status?.status === 'paused'
-  const isConnected = status?.connected
-
-  const loadFiles = async () => {
-    setFilesLoading(true)
-    try {
-      const r = await api.get(`/printers/${printerId}/octoprint/files`)
-      setFiles(r.data.files || [])
-    } catch (e) {
-      setMessage({ type: 'error', text: e.response?.data?.detail || 'Fehler beim Laden der Dateien' })
-    } finally {
-      setFilesLoading(false)
-    }
-  }
-
-  const toggleFiles = () => {
-    if (!filesOpen) loadFiles()
-    setFilesOpen(!filesOpen)
-  }
-
-  const doAction = async (action) => {
-    setBusy(true)
-    setMessage(null)
-    try {
-      await api.post(`/printers/${printerId}/${action}`)
-      setMessage({ type: 'success', text: `${action === 'pause' ? 'Pausiert' : action === 'resume' ? 'Fortgesetzt' : 'Abgebrochen'} ✓` })
-      if (onStatusUpdate) setTimeout(onStatusUpdate, 1000)
-    } catch (e) {
-      setMessage({ type: 'error', text: e.response?.data?.detail || `${action} fehlgeschlagen` })
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const printFile = async (filePath) => {
-    if (!confirm(`Druck von "${filePath}" starten?`)) return
-    setBusy(true)
-    setMessage(null)
-    try {
-      await api.post(`/printers/${printerId}/octoprint/print`, { file_path: filePath })
-      setMessage({ type: 'success', text: `Druck gestartet: ${filePath} ✓` })
-      if (onStatusUpdate) setTimeout(onStatusUpdate, 1500)
-      setFilesOpen(false)
-    } catch (e) {
-      setMessage({ type: 'error', text: e.response?.data?.detail || 'Druckstart fehlgeschlagen' })
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const doUpload = async () => {
-    if (!uploadFile) {
-      setMessage({ type: 'error', text: 'Bitte eine Datei wählen' })
-      return
-    }
-    setUploading(true)
-    setMessage(null)
-    try {
-      const fd = new FormData()
-      fd.append('file', uploadFile)
-      const r = await api.post(
-        `/printers/${printerId}/octoprint/upload?print_now=${printNow}`,
-        fd,
-        { headers: { 'Content-Type': 'multipart/form-data' } }
-      )
-      setMessage({
-        type: 'success',
-        text: r.data.print_started
-          ? `Hochgeladen + Druck gestartet: ${r.data.filename} ✓`
-          : `Hochgeladen: ${r.data.filename} ✓`,
-      })
-      setUploadFile(null)
-      setUploadOpen(false)
-      if (filesOpen) loadFiles()
-      if (onStatusUpdate) setTimeout(onStatusUpdate, 1500)
-    } catch (e) {
-      setMessage({ type: 'error', text: e.response?.data?.detail || 'Upload fehlgeschlagen' })
-    } finally {
-      setUploading(false)
-    }
-  }
-
-  const formatSize = (bytes) => {
-    if (!bytes) return '—'
-    if (bytes < 1024) return `${bytes} B`
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-    return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-  }
-
+// Lüfter-Balken-Komponente
+function FanBar({ label, value }) {
+  const pct = parseInt(value) || 0
   return (
-    <div className="card">
-      <h2 className="font-semibold mb-4 flex items-center gap-2">🐙 OctoPrint-Steuerung</h2>
-
-      {message && (
-        <div className={`p-2 rounded text-sm mb-3 ${
-          message.type === 'success'
-            ? 'bg-green-50 text-green-800 border border-green-200'
-            : 'bg-red-50 text-red-800 border border-red-200'
-        }`}>
-          {message.text}
-        </div>
-      )}
-
-      {!isConnected ? (
-        <p className="text-sm text-gray-500">OctoPrint nicht verbunden.</p>
-      ) : (
-        <>
-          <div className="flex flex-wrap gap-2 mb-4">
-            {isPrinting && (
-              <button onClick={() => doAction('pause')} disabled={busy}
-                className="btn-secondary flex items-center gap-2 text-sm disabled:opacity-50">
-                <Pause className="w-4 h-4" /> Pausieren
-              </button>
-            )}
-            {isPaused && (
-              <button onClick={() => doAction('resume')} disabled={busy}
-                className="btn-primary flex items-center gap-2 text-sm disabled:opacity-50">
-                <Play className="w-4 h-4" /> Fortsetzen
-              </button>
-            )}
-            {(isPrinting || isPaused) && (
-              <button
-                onClick={() => {
-                  if (confirm('Druck wirklich abbrechen?')) doAction('stop')
-                }}
-                disabled={busy}
-                className="btn-secondary flex items-center gap-2 text-sm text-red-600 disabled:opacity-50"
-              >
-                <Square className="w-4 h-4" /> Abbrechen
-              </button>
-            )}
-          </div>
-
-          <div className="border-t pt-3 space-y-2">
-            <div className="flex flex-wrap gap-2">
-              <button onClick={toggleFiles} className="btn-secondary text-sm flex items-center gap-2">
-                <FileText className="w-4 h-4" />
-                {filesOpen ? 'Dateien ausblenden' : 'Dateien anzeigen'}
-              </button>
-              <button onClick={() => setUploadOpen(!uploadOpen)} className="btn-secondary text-sm flex items-center gap-2">
-                <Upload className="w-4 h-4" />
-                {uploadOpen ? 'Upload schließen' : 'Datei hochladen'}
-              </button>
-            </div>
-
-            {uploadOpen && (
-              <div className="bg-gray-50 border rounded p-3 mt-2">
-                <label className="block">
-                  <span className="text-xs text-gray-600 mb-1 block">G-Code / 3MF Datei</span>
-                  <input
-                    type="file"
-                    accept=".gcode,.gco,.g,.3mf,.bgcode"
-                    onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
-                    className="text-sm w-full"
-                  />
-                </label>
-                {uploadFile && (
-                  <p className="text-xs text-gray-600 mt-1">
-                    Gewählt: {uploadFile.name} ({formatSize(uploadFile.size)})
-                  </p>
-                )}
-                <label className="flex items-center gap-2 mt-2 text-sm cursor-pointer">
-                  <input type="checkbox" checked={printNow} onChange={(e) => setPrintNow(e.target.checked)} className="w-4 h-4" />
-                  <span>Sofort drucken nach Upload</span>
-                </label>
-                <button
-                  onClick={doUpload}
-                  disabled={uploading || !uploadFile}
-                  className="btn-primary text-sm w-full mt-2 disabled:opacity-50"
-                >
-                  {uploading ? 'Lade hoch...' : 'Hochladen'}
-                </button>
-              </div>
-            )}
-
-            {filesOpen && (
-              <div className="bg-gray-50 border rounded mt-2 max-h-80 overflow-auto">
-                {filesLoading ? (
-                  <p className="text-sm text-gray-500 p-3">Lade Dateien...</p>
-                ) : files.length === 0 ? (
-                  <p className="text-sm text-gray-500 p-3">Keine Dateien gefunden</p>
-                ) : (
-                  <table className="w-full text-sm">
-                    <thead className="bg-gray-100 sticky top-0">
-                      <tr>
-                        <th className="text-left px-3 py-2 font-medium text-gray-600">Datei</th>
-                        <th className="text-right px-3 py-2 font-medium text-gray-600">Größe</th>
-                        <th className="text-right px-3 py-2 font-medium text-gray-600">Aktion</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {files.map((f) => (
-                        <tr key={f.path} className="border-t border-gray-200 hover:bg-white">
-                          <td className="px-3 py-2 truncate max-w-xs" title={f.path}>{f.path}</td>
-                          <td className="px-3 py-2 text-right text-gray-600">{formatSize(f.size)}</td>
-                          <td className="px-3 py-2 text-right">
-                            <button
-                              onClick={() => printFile(f.path)}
-                              disabled={busy || isPrinting}
-                              className="text-primary-600 hover:text-primary-800 disabled:opacity-30 inline-flex items-center gap-1"
-                              title={isPrinting ? 'Drucker beschäftigt' : 'Drucken'}
-                            >
-                              <Play className="w-3 h-3" /> Drucken
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </div>
-            )}
-          </div>
-        </>
-      )}
+    <div className="border rounded p-2 bg-white">
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-gray-500">{label}</span>
+        <span className="font-mono">{pct}%</span>
+      </div>
+      <div className="w-full bg-gray-200 rounded-full h-1">
+        <div className="bg-blue-500 h-1 rounded-full transition-all" style={{ width: `${pct}%` }} />
+      </div>
     </div>
   )
 }

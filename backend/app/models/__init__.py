@@ -11,7 +11,7 @@ from app.models.invoice import Invoice, InvoiceItem
 from app.models.notifications import SmtpSettings, NotificationPreference
 from app.models.inventory import InventoryItem
 from app.models.integration import IntegrationSettings
-from app.models.email_template import EmailTemplate
+from app.models.library import LibraryFile
 
 __all__ = [
     "User", "Company", "Printer", "Maintenance",
@@ -19,5 +19,5 @@ __all__ = [
     "PrintJob", "PrintJobPlate", "PrintJobFilament",
     "PrintHistory", "PrintHistoryFilament", "PowerReading",
     "Invoice", "InvoiceItem", "SmtpSettings", "NotificationPreference",
-    "InventoryItem", "IntegrationSettings", "EmailTemplate",
+    "InventoryItem", "IntegrationSettings", "LibraryFile",
 ]

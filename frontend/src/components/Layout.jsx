@@ -5,7 +5,7 @@ import {
   LogOut, UserCog, Zap, Calculator, Receipt, Mail, Bell,
   LayoutDashboard, MapPin, ChevronDown, ChevronRight,
   BarChart3, DollarSign, Boxes, Settings, FileSpreadsheet, Database,
-  Menu, X, Plug, Calendar as CalendarIcon,
+  Menu, X, Plug, ListOrdered, Archive,
 } from 'lucide-react'
 import { useAuth } from '../services/auth'
 
@@ -31,10 +31,11 @@ const menuTree = [
   {
     type: 'group', id: 'customers', label: 'Kunden & Aufträge', icon: Users,
     children: [
-      { to: '/customers', label: 'Kunden',    icon: Users },
-      { to: '/jobs',      label: 'Aufträge',  icon: FileText },
-      { to: '/calendar',  label: 'Kalender',  icon: CalendarIcon },
-      { to: '/invoices',  label: 'Rechnungen', icon: Receipt },
+      { to: '/customers', label: 'Kunden',        icon: Users },
+      { to: '/jobs',      label: 'Aufträge',      icon: FileText },
+      { to: '/queue',     label: 'Warteschlange', icon: ListOrdered },
+      { to: '/library',   label: 'Archiv',        icon: Archive },
+      { to: '/invoices',  label: 'Rechnungen',    icon: Receipt },
     ],
   },
   {
@@ -51,12 +52,11 @@ const menuTree = [
 ]
 
 const adminItems = [
-  { to: '/company',         label: 'Firmendaten',    icon: Building2 },
-  { to: '/smtp',            label: 'E-Mail-Server',  icon: Mail },
-  { to: '/email-templates', label: 'E-Mail-Texte',   icon: FileText },
-  { to: '/integrations',    label: 'Integrationen',  icon: Plug },
-  { to: '/users',           label: 'Mitarbeiter',    icon: UserCog },
-  { to: '/backup',          label: 'Backups',        icon: Database },
+  { to: '/company',      label: 'Firmendaten',    icon: Building2 },
+  { to: '/smtp',         label: 'E-Mail-Server',  icon: Mail },
+  { to: '/integrations', label: 'Integrationen',  icon: Plug },
+  { to: '/users',        label: 'Mitarbeiter',    icon: UserCog },
+  { to: '/backup',       label: 'Backups',        icon: Database },
 ]
 
 function MenuItem({ to, label, icon: Icon, end }) {

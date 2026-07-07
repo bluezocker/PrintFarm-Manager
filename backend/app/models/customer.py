@@ -71,9 +71,15 @@ class PrintJob(Base):
     file_path = Column(String(500))            # hochgeladene STL/3MF
     print_file_name = Column(String(300))      # Dateiname auf dem Drucker (z.B. "wuerfel.3mf")
                                                 # Wird für Auto-Matching von MQTT-Events genutzt
+    library_file_id = Column(Integer, ForeignKey("library_files.id", ondelete="SET NULL"))  # Verknüpfung zum Archiv
     result_photo_path = Column(String(500))    # Manuell hochgeladenes Foto vom Druckergebnis
     customer_notified_start = Column(Boolean, default=False)    # Kunde wurde über Druckstart informiert
     customer_notified_done = Column(Boolean, default=False)     # Kunde wurde über Fertigstellung informiert
+
+    # Print Queue (Warteschlange)
+    queue_position = Column(Integer)             # Position in der Warteschlange, NULL wenn nicht in Queue
+    queue_printer_id = Column(Integer, ForeignKey("printers.id", ondelete="SET NULL"))  # Welchem Drucker zugewiesen
+
     notes = Column(Text)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -14,7 +14,7 @@ from app.services.camera_service import camera_manager
 from app.api import (
     auth, printers, power, filament, customers, history,
     company, calculation, invoices, notifications, camera, inventory,
-    dashboard, export, backup, integrations, email_templates,
+    dashboard, export, backup, integrations, library, queue,
 )
 from app.services.notifier import start_notifier, stop_notifier
 from app.services.backup_service import start_auto_backup, stop_auto_backup
@@ -52,14 +52,6 @@ def initialize():
         integ_for_bambu = db.query(IntegrationSettings).first()
 
         for p in db.query(Printer).all():
-            # OctoPrint
-            if p.connection_mode == "octoprint":
-                if p.octo_url and p.octo_api_key:
-                    logger.info(f"Verbinde Drucker {p.name} (OctoPrint)...")
-                    from app.services.octoprint_service import octoprint_manager
-                    octoprint_manager.register(p.id, p.octo_url, p.octo_api_key)
-                continue
-
             if not p.bambu_serial:
                 continue
             if p.connection_mode == "cloud":
@@ -97,10 +89,6 @@ def initialize():
 
         # Tuya-Verbindung versuchen (liest jetzt DB-Werte)
         tuya_service.connect()
-
-        # Email-Templates: Defaults seeden falls noch nicht vorhanden
-        from app.services.notifier import seed_default_email_templates
-        seed_default_email_templates(db)
     finally:
         db.close()
 
@@ -151,7 +139,8 @@ app.include_router(dashboard.router)
 app.include_router(export.router)
 app.include_router(backup.router)
 app.include_router(integrations.router)
-app.include_router(email_templates.router)
+app.include_router(library.router)
+app.include_router(queue.router)
 
 
 @app.get("/")

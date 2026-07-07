@@ -448,16 +448,102 @@ class BambuPrinterClient:
     def stop_print(self):
         return self._publish({"print": {"sequence_id": "0", "command": "stop"}})
 
+    def set_led(self, on: bool):
+        """Chamber-LED an/aus."""
+        return self._publish({
+            "system": {
+                "sequence_id": "0",
+                "command": "ledctrl",
+                "led_node": "chamber_light",
+                "led_mode": "on" if on else "off",
+                "led_on_time": 500,
+                "led_off_time": 500,
+                "loop_times": 0,
+                "interval_time": 0,
+            }
+        })
+
+    def home_printer(self):
+        """Homing (Achsen anfahren)."""
+        return self._publish({
+            "print": {"sequence_id": "0", "command": "gcode_line", "param": "G28\n"}
+        })
+
+    def set_print_speed(self, level: int):
+        """Druckgeschwindigkeit setzen (1=Silent, 2=Standard, 3=Sport, 4=Ludicrous)."""
+        return self._publish({
+            "print": {"sequence_id": "0", "command": "print_speed", "param": str(level)}
+        })
+
+    def unload_filament(self):
+        """Filament aus AMS entladen."""
+        return self._publish({
+            "print": {"sequence_id": "0", "command": "gcode_line", "param": "M702\n"}
+        })
+
+    def move_axis(self, axis: str, distance: float):
+        """Manuell einen Achse bewegen (X, Y, Z)."""
+        axis = axis.upper()
+        if axis not in ("X", "Y", "Z"):
+            return False
+        # Relative Bewegung
+        return self._publish({
+            "print": {
+                "sequence_id": "0",
+                "command": "gcode_line",
+                "param": f"G91\nG1 {axis}{distance} F3000\nG90\n",
+            }
+        })
+
     def get_status_summary(self) -> dict:
         """Extrahiert die wichtigsten Felder aus den rohen MQTT-Daten."""
         with self._lock:
             data = self.last_status.get("print", {})
         gcode_state = data.get("gcode_state", "UNKNOWN")
-        # Mappen auf einfache Status-Strings
         status_map = {
             "IDLE": "idle", "RUNNING": "printing", "PAUSE": "paused",
             "FINISH": "finish", "FAILED": "error", "PREPARE": "preparing",
         }
+
+        # AMS-Slots extrahieren
+        ams_units = []
+        ams_data = data.get("ams", {})
+        for unit in ams_data.get("ams", []):
+            trays = []
+            for tray in unit.get("tray", []):
+                tray_info = {
+                    "id": tray.get("id"),                          # "0" bis "3"
+                    "color": tray.get("tray_color"),                # z.B. "FFFFFF"
+                    "material": tray.get("tray_type"),              # "PLA", "PETG", ...
+                    "sub_brand": tray.get("tray_sub_brands"),
+                    "remain": tray.get("remain"),                    # 0-100 (Prozent)
+                    "nozzle_temp_max": tray.get("nozzle_temp_max"),
+                    "nozzle_temp_min": tray.get("nozzle_temp_min"),
+                    "empty": not tray.get("tray_type"),              # leerer Slot?
+                }
+                trays.append(tray_info)
+            ams_units.append({
+                "id": unit.get("id"),
+                "humidity": unit.get("humidity"),                    # "1"-"5" (0=trocken, 5=feucht)
+                "temp": unit.get("temp"),
+                "trays": trays,
+            })
+
+        # Externer Spool (vt_tray = "virtual tray")
+        vt_tray = data.get("vt_tray", {})
+        external_tray = None
+        if vt_tray:
+            external_tray = {
+                "id": vt_tray.get("id"),
+                "color": vt_tray.get("tray_color"),
+                "material": vt_tray.get("tray_type"),
+                "remain": vt_tray.get("remain"),
+                "empty": not vt_tray.get("tray_type"),
+            }
+
+        # Aktueller AMS-Slot in Verwendung
+        tray_now = ams_data.get("tray_now")
+
         return {
             "status": status_map.get(gcode_state, gcode_state.lower()),
             "current_job_name": data.get("subtask_name") or data.get("gcode_file"),
@@ -465,13 +551,35 @@ class BambuPrinterClient:
             "current_subtask_name": data.get("subtask_name"),
             "progress": float(data.get("mc_percent", 0)),
             "nozzle_temp": data.get("nozzle_temper"),
+            "nozzle_target_temp": data.get("nozzle_target_temper"),
             "bed_temp": data.get("bed_temper"),
+            "bed_target_temp": data.get("bed_target_temper"),
+            "chamber_temp": data.get("chamber_temper"),
             "remaining_time": data.get("mc_remaining_time"),
             "layer_num": data.get("layer_num"),
             "total_layer_num": data.get("total_layer_num"),
+            # Neu: Detaillierte Infos für Dashboard-Widgets
+            "wifi_signal": data.get("wifi_signal"),                  # "-44dBm" oder "-44"
+            "cooling_fan_speed": data.get("cooling_fan_speed"),      # Part Cooling (0-100 in %)
+            "big_fan1_speed": data.get("big_fan1_speed"),            # Aux Fan
+            "big_fan2_speed": data.get("big_fan2_speed"),            # Chamber Fan
+            "spd_lvl": data.get("spd_lvl"),                          # Druckgeschwindigkeit-Level (1=silent, 2=normal, 3=sport, 4=ludicrous)
+            "light_status": self._get_light_status(data),            # LED an/aus
+            "hms": data.get("hms"),                                  # HMS-Fehler-Codes
+            "ams": ams_units,
+            "external_tray": external_tray,
+            "tray_now": tray_now,
             "last_update": self.last_update.isoformat() if self.last_update else None,
             "connected": self.connected,
         }
+
+    def _get_light_status(self, data: dict) -> Optional[str]:
+        """LED-Status aus den MQTT-Daten extrahieren."""
+        lights = data.get("lights_report", [])
+        for light in lights:
+            if light.get("node") == "chamber_light":
+                return light.get("mode")   # "on" oder "off"
+        return None
 
 
 class BambuManager:
