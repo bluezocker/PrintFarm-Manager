@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Plus, FileText, Edit2, Trash2, Calculator, Receipt, X, ArrowRight } from 'lucide-react'
+import { Plus, FileText, Edit2, Trash2, Calculator, Receipt, X, ArrowRight, Image as ImageIcon, Upload, Trash } from 'lucide-react'
 import api from '../services/api'
 import Modal from '../components/Modal'
 
@@ -35,6 +35,17 @@ export default function Jobs() {
   const [calcModal, setCalcModal] = useState(null)
   const [calcConfig, setCalcConfig] = useState({ printer_id: '', filament_id: '' })
   const [defaultVat, setDefaultVat] = useState(19)  // aus Firmendaten
+
+  // Inline-Kalkulation im Auftrag-Modal
+  const [calcPrinterId, setCalcPrinterId] = useState('')
+  const [calcResult, setCalcResult] = useState(null)
+  const [calcLoading, setCalcLoading] = useState(false)
+  const [calcError, setCalcError] = useState('')
+
+  // Druckergebnis-Foto
+  const [photoUploading, setPhotoUploading] = useState(false)
+  const [photoError, setPhotoError] = useState('')
+  const [photoTimestamp, setPhotoTimestamp] = useState(Date.now())
 
   const load = async () => {
     const url = filterStatus ? `/jobs?status=${filterStatus}` : '/jobs'
@@ -77,6 +88,10 @@ export default function Jobs() {
     setForm({ ...empty, vat_rate: defaultVat })
     setFilRows([])
     setPlates([{ name: 'Platte 1', duration_hours: 0, filaments: [{ filament_id: '', grams_reserved: 0 }] }])
+    setCalcResult(null)
+    setCalcError('')
+    setCalcPrinterId(printers[0]?.id || '')
+    setPhotoError('')
     setOpen(true)
   }
 
@@ -112,6 +127,11 @@ export default function Jobs() {
         }))
       )
     }
+    setCalcResult(null)
+    setCalcError('')
+    setCalcPrinterId(printers[0]?.id || '')
+    setPhotoError('')
+    setPhotoTimestamp(Date.now())
     setOpen(true)
   }
 
@@ -166,6 +186,98 @@ export default function Jobs() {
     setFilRows(next)
   }
   const totalReserved = filRows.reduce((s, r) => s + (parseFloat(r.grams_reserved) || 0), 0)
+
+  // === Inline-Kalkulation im Auftrag-Modal ===
+  const runInlineCalc = async () => {
+    setCalcError('')
+    setCalcResult(null)
+    if (!calcPrinterId) {
+      setCalcError('Bitte einen Drucker auswählen')
+      return
+    }
+    const hours = plates.length > 0
+      ? totalDuration
+      : parseFloat(form.estimated_hours) || 0
+    if (hours <= 0) {
+      setCalcError('Bitte Druckzeit eintragen (entweder pro Platte oder als Schätzung)')
+      return
+    }
+    let filamentItems = []
+    if (plates.length > 0) {
+      const byId = {}
+      for (const p of plates) {
+        for (const f of p.filaments) {
+          if (!f.filament_id || !parseFloat(f.grams_reserved)) continue
+          const id = Number(f.filament_id)
+          byId[id] = (byId[id] || 0) + parseFloat(f.grams_reserved)
+        }
+      }
+      filamentItems = Object.entries(byId).map(([id, g]) => ({ filament_id: Number(id), grams: g }))
+    } else {
+      filamentItems = filRows
+        .filter((r) => r.filament_id && parseFloat(r.grams_reserved) > 0)
+        .map((r) => ({ filament_id: Number(r.filament_id), grams: parseFloat(r.grams_reserved) }))
+    }
+    if (filamentItems.length === 0) {
+      setCalcError('Bitte mindestens ein Filament mit Gramm-Angabe wählen')
+      return
+    }
+
+    setCalcLoading(true)
+    try {
+      const r = await api.post('/calculation/calculate', {
+        printer_id: Number(calcPrinterId),
+        duration_hours: hours,
+        filaments: filamentItems,
+        quantity: parseInt(form.quantity) || 1,
+      })
+      setCalcResult(r.data)
+    } catch (e) {
+      setCalcError(e.response?.data?.detail || 'Fehler bei der Kalkulation')
+    } finally {
+      setCalcLoading(false)
+    }
+  }
+
+  const applyCalcResult = () => {
+    if (!calcResult) return
+    const net = Math.round(calcResult.calculated_price_net * 100) / 100
+    const v = parseFloat(form.vat_rate) || 0
+    const gross = Math.round(net * (1 + v / 100) * 100) / 100
+    setForm({ ...form, price_net: net, price_gross: gross })
+  }
+
+  // === Foto-Upload ===
+  const uploadPhoto = async (file) => {
+    if (!file || !editing) return
+    setPhotoError('')
+    setPhotoUploading(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const r = await api.post(`/jobs/${editing.id}/photo`, fd, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      setForm({ ...form, result_photo_path: r.data.path })
+      setPhotoTimestamp(Date.now())
+    } catch (e) {
+      setPhotoError(e.response?.data?.detail || 'Upload fehlgeschlagen')
+    } finally {
+      setPhotoUploading(false)
+    }
+  }
+
+  const deletePhoto = async () => {
+    if (!editing) return
+    if (!confirm('Foto wirklich entfernen?')) return
+    setPhotoError('')
+    try {
+      await api.delete(`/jobs/${editing.id}/photo`)
+      setForm({ ...form, result_photo_path: null })
+    } catch (e) {
+      setPhotoError(e.response?.data?.detail || 'Löschen fehlgeschlagen')
+    }
+  }
 
   const save = async (e) => {
     e.preventDefault()
@@ -474,6 +586,81 @@ export default function Jobs() {
                   : 'Wird automatisch aus reservierten Filamenten berechnet'}
               </p>
             </div>
+
+            {/* Inline-Kalkulator */}
+            <div className="col-span-2 border rounded-lg bg-gray-50 p-3">
+              <div className="flex items-center gap-2 mb-2">
+                <Calculator className="w-4 h-4 text-primary-600" />
+                <span className="font-medium text-sm">Kosten kalkulieren</span>
+              </div>
+              <p className="text-xs text-gray-500 mb-3">
+                Nutzt die oben angegebene Druckzeit und die reservierten Filamente.
+                Berechnet Maschinenzeit, Strom, Material und einen Verkaufspreis.
+              </p>
+              <div className="flex gap-2 items-end mb-2">
+                <div className="flex-1">
+                  <label className="label text-xs">Drucker für Kalkulation</label>
+                  <select
+                    className="input text-sm"
+                    value={calcPrinterId}
+                    onChange={(e) => setCalcPrinterId(e.target.value)}
+                  >
+                    <option value="">— Drucker wählen —</option>
+                    {printers.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  type="button"
+                  onClick={runInlineCalc}
+                  disabled={calcLoading}
+                  className="btn-primary text-sm whitespace-nowrap disabled:opacity-50"
+                >
+                  {calcLoading ? 'Berechne...' : 'Berechnen'}
+                </button>
+              </div>
+
+              {calcError && (
+                <div className="bg-red-50 border border-red-200 text-red-700 text-xs px-3 py-2 rounded mt-2">
+                  {calcError}
+                </div>
+              )}
+
+              {calcResult && (
+                <div className="bg-white border border-primary-200 rounded p-3 mt-2 text-sm space-y-1">
+                  <div className="flex justify-between text-xs text-gray-600">
+                    <span>Maschinenzeit:</span>
+                    <span className="font-mono">{calcResult.per_unit.machine_cost.toFixed(2)} €</span>
+                  </div>
+                  <div className="flex justify-between text-xs text-gray-600">
+                    <span>Strom ({calcResult.details.power_source}):</span>
+                    <span className="font-mono">{calcResult.per_unit.power_cost.toFixed(2)} €</span>
+                  </div>
+                  <div className="flex justify-between text-xs text-gray-600">
+                    <span>Material:</span>
+                    <span className="font-mono">{calcResult.per_unit.material_cost.toFixed(2)} €</span>
+                  </div>
+                  <div className="flex justify-between border-t pt-1 mt-1 font-medium">
+                    <span>Selbstkosten:</span>
+                    <span className="font-mono">{calcResult.total_cost_net.toFixed(2)} €</span>
+                  </div>
+                  <div className="flex justify-between text-primary-700 font-bold pt-1 border-t">
+                    <span>Verkaufspreis (+ {calcResult.margin_percent}%):</span>
+                    <span className="font-mono">{calcResult.calculated_price_net.toFixed(2)} €</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={applyCalcResult}
+                    className="btn-secondary w-full text-xs mt-2 flex items-center justify-center gap-1"
+                  >
+                    <ArrowRight className="w-3 h-3" />
+                    In Verkaufspreis übernehmen
+                  </button>
+                </div>
+              )}
+            </div>
+
             <div>
               <label className="label">Netto (€)</label>
               <input type="number" step="0.01" className="input" value={form.price_net}
@@ -664,6 +851,72 @@ export default function Jobs() {
                 Sobald die Datei gedruckt wird, bekommt der Kunde automatisch eine E-Mail.
               </p>
             </div>
+            {/* Druckergebnis-Foto - nur beim Bearbeiten */}
+            {editing && (
+              <div className="col-span-2 border rounded-lg bg-gray-50 p-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <ImageIcon className="w-4 h-4 text-primary-600" />
+                  <span className="font-medium text-sm">Druckergebnis-Foto</span>
+                </div>
+                <p className="text-xs text-gray-500 mb-3">
+                  Lade einen Screenshot aus Bambu Studio hoch. Wird automatisch an die
+                  Kunden-Mail bei Status "Fertig" angehängt.
+                </p>
+
+                {form.result_photo_path ? (
+                  <div className="space-y-2">
+                    <div className="border rounded bg-white p-2 inline-block">
+                      <img
+                        src={`/api/jobs/${editing.id}/photo?t=${photoTimestamp}`}
+                        alt="Druckergebnis"
+                        className="max-h-64 rounded"
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <label className="btn-secondary text-sm cursor-pointer flex items-center gap-2">
+                        <Upload className="w-4 h-4" />
+                        Foto ersetzen
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => uploadPhoto(e.target.files?.[0])}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        onClick={deletePhoto}
+                        className="btn-secondary text-sm text-red-600 flex items-center gap-2"
+                      >
+                        <Trash className="w-4 h-4" />
+                        Foto entfernen
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <label className="btn-secondary text-sm cursor-pointer inline-flex items-center gap-2">
+                    <Upload className="w-4 h-4" />
+                    Foto hochladen
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => uploadPhoto(e.target.files?.[0])}
+                    />
+                  </label>
+                )}
+
+                {photoError && (
+                  <div className="bg-red-50 border border-red-200 text-red-700 text-xs px-3 py-2 rounded mt-2">
+                    {photoError}
+                  </div>
+                )}
+                {photoUploading && (
+                  <div className="text-xs text-gray-500 mt-2">Lade hoch...</div>
+                )}
+              </div>
+            )}
+
             <div className="col-span-2">
               <label className="label">Notizen</label>
               <textarea className="input" rows="2" value={form.notes || ''}
