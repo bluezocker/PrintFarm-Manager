@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Plus, FileText, Edit2, Trash2, Calculator, Receipt, X, ArrowRight, ListOrdered } from 'lucide-react'
+import { useSearchParams } from 'react-router-dom'
+import { Plus, FileText, Edit2, Trash2, Calculator, Receipt, X, ArrowRight } from 'lucide-react'
 import api from '../services/api'
 import Modal from '../components/Modal'
 
@@ -56,6 +57,20 @@ export default function Jobs() {
   }
 
   useEffect(() => { load() }, [filterStatus])
+
+  // Beim Aufruf via /jobs?edit=123 das passende Modal automatisch öffnen
+  const [searchParams, setSearchParams] = useSearchParams()
+  useEffect(() => {
+    const editId = searchParams.get('edit')
+    if (!editId || jobs.length === 0) return
+    const job = jobs.find((j) => String(j.id) === String(editId))
+    if (job) {
+      openEdit(job)
+      // URL-Parameter wieder entfernen
+      searchParams.delete('edit')
+      setSearchParams(searchParams, { replace: true })
+    }
+  }, [jobs, searchParams])
 
   const openNew = () => {
     setEditing(null)
