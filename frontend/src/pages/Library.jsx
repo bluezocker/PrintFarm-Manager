@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   Upload, Search, Trash2, Download, Edit2, X, Clock, Package,
-  FileText, Grid, List as ListIcon, RefreshCw,
+  FileText, Grid, List as ListIcon, RefreshCw, Box, FolderKanban,
 } from 'lucide-react'
 import api from '../services/api'
 import Modal from '../components/Modal'
+import ThreeDViewer from '../components/ThreeDViewer'
 
 const CATEGORIES = [
   { value: 'general', label: 'Allgemein' },
@@ -70,14 +71,18 @@ function ThumbnailImg({ fileId, alt = '', className = '', refreshKey }) {
 
 export default function Library() {
   const [files, setFiles] = useState([])
+  const [projects, setProjects] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [search, setSearch] = useState('')
   const [category, setCategory] = useState('')
+  const [projectFilter, setProjectFilter] = useState('')  // '' = alle, 'none' = unzugewiesen, 'ID' = spezifisch
   const [view, setView] = useState('grid')
   const [uploadOpen, setUploadOpen] = useState(false)
   const [editingFile, setEditingFile] = useState(null)
   const [regenerating, setRegenerating] = useState(null)
+  const [viewer3d, setViewer3d] = useState(null)  // {fileId, fileType, filename}
+  const [duplicateInfo, setDuplicateInfo] = useState(null)  // Für Duplikat-Dialog
 
   const load = async () => {
     setLoading(true)
@@ -86,6 +91,8 @@ export default function Library() {
       const params = new URLSearchParams()
       if (search) params.set('search', search)
       if (category) params.set('category', category)
+      if (projectFilter === 'none') params.set('unassigned', 'true')
+      else if (projectFilter) params.set('project_id', projectFilter)
       const r = await api.get(`/library?${params}`)
       setFiles(r.data)
     } catch (e) {
@@ -95,7 +102,15 @@ export default function Library() {
     }
   }
 
-  useEffect(() => { load() }, [category])
+  const loadProjects = async () => {
+    try {
+      const r = await api.get('/projects')
+      setProjects(r.data)
+    } catch {}
+  }
+
+  useEffect(() => { loadProjects() }, [])
+  useEffect(() => { load() }, [category, projectFilter])
 
   useEffect(() => {
     const t = setTimeout(() => load(), 400)
@@ -178,6 +193,14 @@ export default function Library() {
               <option key={c.value} value={c.value}>{c.label}</option>
             ))}
           </select>
+          <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}
+            className="input text-sm !w-auto">
+            <option value="">Alle Projekte</option>
+            <option value="none">— Ohne Projekt —</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
           <div className="flex border rounded overflow-hidden">
             <button
               onClick={() => setView('grid')}
@@ -219,26 +242,32 @@ export default function Library() {
       ) : view === 'grid' ? (
         <GridView
           files={files}
+          projects={projects}
           onEdit={setEditingFile}
           onDelete={del}
           onDownload={download}
           onRegenerateThumbnail={regenerateThumbnail}
+          on3DView={(f) => setViewer3d({ fileId: f.id, fileType: f.file_type, filename: f.display_name || f.filename })}
           regenerating={regenerating}
         />
       ) : (
         <ListView
           files={files}
+          projects={projects}
           onEdit={setEditingFile}
           onDelete={del}
           onDownload={download}
           onRegenerateThumbnail={regenerateThumbnail}
+          on3DView={(f) => setViewer3d({ fileId: f.id, fileType: f.file_type, filename: f.display_name || f.filename })}
           regenerating={regenerating}
         />
       )}
 
       {uploadOpen && (
         <UploadDialog
+          projects={projects}
           onClose={() => setUploadOpen(false)}
+          onDuplicate={(info, formData) => setDuplicateInfo({ info, formData })}
           onSuccess={() => {
             setUploadOpen(false)
             load()
@@ -249,10 +278,42 @@ export default function Library() {
       {editingFile && (
         <EditDialog
           file={editingFile}
+          projects={projects}
           onClose={() => setEditingFile(null)}
           onSaved={(updated) => {
             setFiles(files.map((f) => (f.id === updated.id ? updated : f)))
             setEditingFile(null)
+          }}
+        />
+      )}
+
+      {viewer3d && (
+        <ThreeDViewer
+          fileId={viewer3d.fileId}
+          fileType={viewer3d.fileType}
+          filename={viewer3d.filename}
+          onClose={() => setViewer3d(null)}
+        />
+      )}
+
+      {duplicateInfo && (
+        <DuplicateDialog
+          duplicate={duplicateInfo.info}
+          formData={duplicateInfo.formData}
+          onClose={() => setDuplicateInfo(null)}
+          onForce={async () => {
+            const fd = duplicateInfo.formData
+            fd.set('allow_duplicate', 'true')
+            try {
+              await api.post('/library/upload', fd, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+              })
+              setDuplicateInfo(null)
+              setUploadOpen(false)
+              load()
+            } catch (e) {
+              alert(e.response?.data?.detail || 'Upload fehlgeschlagen')
+            }
           }}
         />
       )}
@@ -263,7 +324,7 @@ export default function Library() {
 // =========================================================================
 // Grid View
 // =========================================================================
-function GridView({ files, onEdit, onDelete, onDownload, onRegenerateThumbnail, regenerating }) {
+function GridView({ files, projects, onEdit, onDelete, onDownload, onRegenerateThumbnail, on3DView, regenerating }) {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
       {files.map((file) => (
@@ -320,6 +381,12 @@ function GridView({ files, onEdit, onDelete, onDownload, onRegenerateThumbnail, 
               </div>
             )}
             <div className="flex justify-between items-center gap-1 mt-2 pt-2 border-t">
+              {(file.file_type === '3mf' || file.file_type === 'stl') && (
+                <button onClick={() => on3DView(file)} className="text-gray-400 hover:text-primary-600 p-1"
+                  title="3D-Vorschau">
+                  <Box className="w-4 h-4" />
+                </button>
+              )}
               <button onClick={() => onDownload(file)} className="text-gray-400 hover:text-primary-600 p-1"
                 title="Download">
                 <Download className="w-4 h-4" />
@@ -343,7 +410,7 @@ function GridView({ files, onEdit, onDelete, onDownload, onRegenerateThumbnail, 
 // =========================================================================
 // List View
 // =========================================================================
-function ListView({ files, onEdit, onDelete, onDownload, onRegenerateThumbnail, regenerating }) {
+function ListView({ files, projects, onEdit, onDelete, onDownload, onRegenerateThumbnail, on3DView, regenerating }) {
   return (
     <div className="card !p-0 overflow-x-auto">
       <table className="w-full text-sm">
@@ -402,6 +469,11 @@ function ListView({ files, onEdit, onDelete, onDownload, onRegenerateThumbnail, 
                     <RefreshCw className={`w-4 h-4 inline ${regenerating === file.id ? 'animate-spin' : ''}`} />
                   </button>
                 )}
+                {(file.file_type === '3mf' || file.file_type === 'stl') && (
+                  <button onClick={() => on3DView(file)} className="text-gray-400 hover:text-primary-600 mr-2" title="3D-Vorschau">
+                    <Box className="w-4 h-4 inline" />
+                  </button>
+                )}
                 <button onClick={() => onDownload(file)} className="text-gray-400 hover:text-primary-600 mr-2" title="Download">
                   <Download className="w-4 h-4 inline" />
                 </button>
@@ -423,12 +495,13 @@ function ListView({ files, onEdit, onDelete, onDownload, onRegenerateThumbnail, 
 // =========================================================================
 // Upload-Dialog
 // =========================================================================
-function UploadDialog({ onClose, onSuccess }) {
+function UploadDialog({ projects, onClose, onSuccess, onDuplicate }) {
   const [file, setFile] = useState(null)
   const [displayName, setDisplayName] = useState('')
   const [category, setCategory] = useState('general')
   const [tags, setTags] = useState('')
   const [description, setDescription] = useState('')
+  const [projectId, setProjectId] = useState('')
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
   const inputRef = useRef(null)
@@ -448,19 +521,30 @@ function UploadDialog({ onClose, onSuccess }) {
     }
     setUploading(true)
     setError('')
+    const fd = new FormData()
+    fd.append('file', file)
+    if (displayName) fd.append('display_name', displayName)
+    if (category) fd.append('category', category)
+    if (tags) fd.append('tags', tags)
+    if (description) fd.append('description', description)
+    if (projectId) fd.append('project_id', projectId)
+
     try {
-      const fd = new FormData()
-      fd.append('file', file)
-      if (displayName) fd.append('display_name', displayName)
-      if (category) fd.append('category', category)
-      if (tags) fd.append('tags', tags)
-      if (description) fd.append('description', description)
       await api.post('/library/upload', fd, {
         headers: { 'Content-Type': 'multipart/form-data' },
       })
       onSuccess()
     } catch (e) {
-      setError(e.response?.data?.detail || 'Upload fehlgeschlagen')
+      // 409 = Duplikat gefunden
+      if (e.response?.status === 409) {
+        const detail = e.response.data?.detail
+        if (detail?.existing) {
+          onDuplicate(detail, fd)
+          setUploading(false)
+          return
+        }
+      }
+      setError(e.response?.data?.detail?.message || e.response?.data?.detail || 'Upload fehlgeschlagen')
     } finally {
       setUploading(false)
     }
@@ -540,6 +624,16 @@ function UploadDialog({ onClose, onSuccess }) {
         </div>
 
         <div>
+          <label className="label">Projekt (optional)</label>
+          <select className="input" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+            <option value="">— Kein Projekt —</option>
+            {(projects || []).map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        </div>
+
+        <div>
           <label className="label">Beschreibung</label>
           <textarea
             className="input"
@@ -574,12 +668,13 @@ function UploadDialog({ onClose, onSuccess }) {
 // =========================================================================
 // Edit-Dialog
 // =========================================================================
-function EditDialog({ file, onClose, onSaved }) {
+function EditDialog({ file, projects, onClose, onSaved }) {
   const [form, setForm] = useState({
     display_name: file.display_name || '',
     category: file.category || 'general',
     tags: file.tags || '',
     description: file.description || '',
+    project_id: file.project_id || '',
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -588,7 +683,11 @@ function EditDialog({ file, onClose, onSaved }) {
     setSaving(true)
     setError('')
     try {
-      const r = await api.patch(`/library/${file.id}`, form)
+      const payload = {
+        ...form,
+        project_id: form.project_id ? parseInt(form.project_id) : null,
+      }
+      const r = await api.patch(`/library/${file.id}`, payload)
       onSaved(r.data)
     } catch (e) {
       setError(e.response?.data?.detail || 'Speichern fehlgeschlagen')
@@ -633,6 +732,16 @@ function EditDialog({ file, onClose, onSaved }) {
           </div>
         </div>
         <div>
+          <label className="label">Projekt</label>
+          <select className="input" value={form.project_id}
+            onChange={(e) => setForm({ ...form, project_id: e.target.value })}>
+            <option value="">— Kein Projekt —</option>
+            {(projects || []).map((p) => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        </div>
+        <div>
           <label className="label">Beschreibung</label>
           <textarea
             className="input"
@@ -652,6 +761,44 @@ function EditDialog({ file, onClose, onSaved }) {
           <button onClick={onClose} className="btn-secondary">Abbrechen</button>
           <button onClick={save} disabled={saving} className="btn-primary disabled:opacity-50">
             {saving ? 'Speichere...' : 'Speichern'}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+
+// =========================================================================
+// Duplikat-Dialog
+// =========================================================================
+function DuplicateDialog({ duplicate, formData, onClose, onForce }) {
+  return (
+    <Modal open onClose={onClose} title="Datei existiert bereits" size="md">
+      <div className="space-y-3">
+        <div className="bg-yellow-50 border border-yellow-200 rounded p-3 text-sm">
+          <p className="font-medium mb-2">⚠️ Diese Datei ist schon in der Bibliothek!</p>
+          <p className="text-yellow-800">
+            Der SHA-256 Hash der hochzuladenden Datei stimmt exakt mit einer bereits
+            vorhandenen Datei überein.
+          </p>
+        </div>
+        <div className="bg-gray-50 rounded p-3 text-sm space-y-1">
+          <div><span className="text-gray-500">Bestehender Name:</span> <strong>{duplicate.display_name || duplicate.filename}</strong></div>
+          <div><span className="text-gray-500">Original-Dateiname:</span> <span className="font-mono">{duplicate.filename}</span></div>
+          {duplicate.upload_date && (
+            <div><span className="text-gray-500">Hochgeladen:</span> {new Date(duplicate.upload_date).toLocaleString('de-DE')}</div>
+          )}
+        </div>
+        <p className="text-sm text-gray-600">
+          Was möchtest du tun?
+        </p>
+        <div className="flex flex-col gap-2 pt-3 border-t">
+          <button onClick={onClose} className="btn-primary">
+            Abbrechen (bestehende Datei behalten)
+          </button>
+          <button onClick={onForce} className="btn-secondary text-sm">
+            Trotzdem hochladen (als zusätzliches Duplikat)
           </button>
         </div>
       </div>

@@ -80,6 +80,9 @@ class PrintJob(Base):
     queue_position = Column(Integer)             # Position in der Warteschlange, NULL wenn nicht in Queue
     queue_printer_id = Column(Integer, ForeignKey("printers.id", ondelete="SET NULL"))  # Welchem Drucker zugewiesen
 
+    # Projekt-Zuordnung
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="SET NULL"), index=True)
+
     notes = Column(Text)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())

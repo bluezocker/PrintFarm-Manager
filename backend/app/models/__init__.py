@@ -12,6 +12,7 @@ from app.models.notifications import SmtpSettings, NotificationPreference
 from app.models.inventory import InventoryItem
 from app.models.integration import IntegrationSettings
 from app.models.library import LibraryFile
+from app.models.project import Project
 
 __all__ = [
     "User", "Company", "Printer", "Maintenance",
@@ -20,4 +21,5 @@ __all__ = [
     "PrintHistory", "PrintHistoryFilament", "PowerReading",
     "Invoice", "InvoiceItem", "SmtpSettings", "NotificationPreference",
     "InventoryItem", "IntegrationSettings", "LibraryFile",
+    "Project",
 ]

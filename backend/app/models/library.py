@@ -18,6 +18,7 @@ class LibraryFile(Base):
     stored_path = Column(String(500), nullable=False)      # Interner Speicherpfad
     file_size = Column(Integer)                             # Bytes
     file_type = Column(String(20))                          # "3mf", "gcode", "stl"
+    file_hash = Column(String(64), index=True)              # SHA-256 für Duplikat-Erkennung
     thumbnail_path = Column(String(500))                    # Extrahiertes Thumbnail
 
     # Metadaten aus 3MF (wenn vorhanden)
@@ -30,6 +31,7 @@ class LibraryFile(Base):
     tags = Column(String(500))                              # Kommagetrennt: "spoolbuddy,useful,work"
     description = Column(Text)
     category = Column(String(50), default="general")        # general, work, hobby, ...
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="SET NULL"), index=True)
 
     # Tracking
     uploaded_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"))

@@ -289,6 +289,8 @@ class PrintJobBase(BaseModel):
     price_gross: float = 0.0
     vat_rate: float = 19.0
     print_file_name: Optional[str] = None  # Dateiname für Auto-Matching mit MQTT
+    library_file_id: Optional[int] = None  # Verknüpfung zum Archiv
+    project_id: Optional[int] = None       # Zugehöriges Projekt
     notes: Optional[str] = None
 
 

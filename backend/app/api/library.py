@@ -6,11 +6,12 @@ import io
 import re
 import zipfile
 import logging
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
@@ -35,9 +36,11 @@ class LibraryFileRead(BaseModel):
     display_name: Optional[str] = None
     file_size: Optional[int] = None
     file_type: Optional[str] = None
+    file_hash: Optional[str] = None
     tags: Optional[str] = None
     description: Optional[str] = None
     category: Optional[str] = None
+    project_id: Optional[int] = None
     estimated_time_minutes: Optional[int] = None
     estimated_material_g: Optional[float] = None
     layer_height: Optional[float] = None
@@ -55,6 +58,7 @@ class LibraryFileUpdate(BaseModel):
     tags: Optional[str] = None
     description: Optional[str] = None
     category: Optional[str] = None
+    project_id: Optional[int] = None
 
 
 def _library_dir() -> Path:
@@ -200,6 +204,8 @@ def list_files(
     category: Optional[str] = None,
     tag: Optional[str] = None,
     search: Optional[str] = None,
+    project_id: Optional[int] = None,
+    unassigned: bool = False,
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
@@ -208,6 +214,10 @@ def list_files(
         q = q.filter(LibraryFile.category == category)
     if tag:
         q = q.filter(LibraryFile.tags.contains(tag))
+    if project_id is not None:
+        q = q.filter(LibraryFile.project_id == project_id)
+    if unassigned:
+        q = q.filter(LibraryFile.project_id.is_(None))
     if search:
         s = f"%{search}%"
         q = q.filter(
@@ -216,7 +226,6 @@ def list_files(
             (LibraryFile.description.ilike(s))
         )
     files = q.order_by(LibraryFile.upload_date.desc()).all()
-    # has_thumbnail Feld setzen
     result = []
     for f in files:
         data = LibraryFileRead.model_validate(f).model_dump()
@@ -232,10 +241,17 @@ async def upload_file(
     category: Optional[str] = Form("general"),
     tags: Optional[str] = Form(None),
     description: Optional[str] = Form(None),
+    project_id: Optional[int] = Form(None),
+    allow_duplicate: bool = Form(False),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """Lädt eine 3MF/G-Code Datei in die Bibliothek hoch."""
+    """Lädt eine 3MF/G-Code Datei in die Bibliothek hoch.
+
+    Prüft SHA-256-Hash auf Duplikate. Bei bestehendem Duplikat wird
+    409 mit Info zur bestehenden Datei zurückgegeben. Mit allow_duplicate=True
+    kann diese Prüfung übersprungen werden.
+    """
     filename = file.filename or "unnamed"
     ext = Path(filename).suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
@@ -247,6 +263,27 @@ async def upload_file(
     content = await file.read()
     if len(content) > MAX_FILE_SIZE:
         raise HTTPException(400, f"Datei zu groß (max. {MAX_FILE_SIZE // 1024 // 1024} MB)")
+
+    # SHA-256 Hash berechnen für Duplikat-Erkennung
+    file_hash = hashlib.sha256(content).hexdigest()
+    logger.info(f"Library: Hash {file_hash[:16]}... für {filename}")
+
+    # Duplikat prüfen
+    if not allow_duplicate:
+        existing = db.query(LibraryFile).filter(LibraryFile.file_hash == file_hash).first()
+        if existing:
+            raise HTTPException(
+                409,
+                {
+                    "message": "Diese Datei existiert bereits in der Bibliothek",
+                    "existing": {
+                        "id": existing.id,
+                        "filename": existing.filename,
+                        "display_name": existing.display_name,
+                        "upload_date": existing.upload_date.isoformat() if existing.upload_date else None,
+                    }
+                }
+            )
 
     # Speichern
     timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
@@ -275,6 +312,7 @@ async def upload_file(
         stored_path=str(target),
         file_size=len(content),
         file_type=ext.lstrip("."),
+        file_hash=file_hash,
         thumbnail_path=thumbnail_path,
         estimated_time_minutes=metadata.get("estimated_time_minutes"),
         estimated_material_g=metadata.get("estimated_material_g"),
@@ -283,6 +321,7 @@ async def upload_file(
         tags=tags,
         description=description,
         category=category or "general",
+        project_id=project_id,
         uploaded_by_id=current_user.id,
     )
     db.add(entry)

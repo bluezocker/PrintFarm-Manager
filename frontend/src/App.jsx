@@ -10,6 +10,8 @@ import Storage from './pages/Storage'
 import Customers from './pages/Customers'
 import Jobs from './pages/Jobs'
 import Library from './pages/Library'
+import Projects from './pages/Projects'
+import ProjectDetail from './pages/ProjectDetail'
 import QueuePage from './pages/Queue'
 import Invoices from './pages/Invoices'
 import History from './pages/History'
@@ -60,6 +62,8 @@ function AppRoutes() {
         <Route path="customers" element={<Customers />} />
         <Route path="jobs" element={<Jobs />} />
         <Route path="library" element={<Library />} />
+        <Route path="projects" element={<Projects />} />
+        <Route path="projects/:id" element={<ProjectDetail />} />
         <Route path="queue" element={<QueuePage />} />
         <Route path="invoices" element={<Invoices />} />
         <Route path="history" element={<History />} />

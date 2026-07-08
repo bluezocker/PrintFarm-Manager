@@ -14,7 +14,7 @@ from app.services.camera_service import camera_manager
 from app.api import (
     auth, printers, power, filament, customers, history,
     company, calculation, invoices, notifications, camera, inventory,
-    dashboard, export, backup, integrations, library, queue,
+    dashboard, export, backup, integrations, library, queue, projects,
 )
 from app.services.notifier import start_notifier, stop_notifier
 from app.services.backup_service import start_auto_backup, stop_auto_backup
@@ -141,6 +141,7 @@ app.include_router(backup.router)
 app.include_router(integrations.router)
 app.include_router(library.router)
 app.include_router(queue.router)
+app.include_router(projects.router)
 
 
 @app.get("/")

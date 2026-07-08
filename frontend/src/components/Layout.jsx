@@ -5,7 +5,7 @@ import {
   LogOut, UserCog, Zap, Calculator, Receipt, Mail, Bell,
   LayoutDashboard, MapPin, ChevronDown, ChevronRight,
   BarChart3, DollarSign, Boxes, Settings, FileSpreadsheet, Database,
-  Menu, X, Plug, ListOrdered, Archive,
+  Menu, X, Plug, ListOrdered, Archive, FolderKanban,
 } from 'lucide-react'
 import { useAuth } from '../services/auth'
 
@@ -35,6 +35,7 @@ const menuTree = [
       { to: '/jobs',      label: 'Aufträge',      icon: FileText },
       { to: '/queue',     label: 'Warteschlange', icon: ListOrdered },
       { to: '/library',   label: 'Archiv',        icon: Archive },
+      { to: '/projects',  label: 'Projekte',      icon: FolderKanban },
       { to: '/invoices',  label: 'Rechnungen',    icon: Receipt },
     ],
   },
