@@ -544,7 +544,25 @@ function UploadDialog({ projects, onClose, onSuccess, onDuplicate }) {
           return
         }
       }
-      setError(e.response?.data?.detail?.message || e.response?.data?.detail || 'Upload fehlgeschlagen')
+      // 413 = Datei zu groß (Nginx-Grenze überschritten)
+      if (e.response?.status === 413) {
+        setError(`Datei zu groß für den Server. Größe: ${(file.size / 1024 / 1024).toFixed(1)} MB. Prüfe die Nginx-Konfiguration (client_max_body_size).`)
+        setUploading(false)
+        return
+      }
+      // Kein Response = Netzwerkfehler / Verbindung abgebrochen
+      if (!e.response) {
+        setError(`Verbindungsfehler beim Upload. Möglicherweise ist die Datei zu groß (${(file.size / 1024 / 1024).toFixed(1)} MB) oder der Server nicht erreichbar.`)
+        setUploading(false)
+        return
+      }
+      // Backend-Fehler mit Detail
+      const detail = e.response?.data?.detail
+      let msg = 'Upload fehlgeschlagen'
+      if (typeof detail === 'string') msg = detail
+      else if (detail?.message) msg = detail.message
+      else if (e.response?.status) msg = `Upload fehlgeschlagen (HTTP ${e.response.status})`
+      setError(msg)
     } finally {
       setUploading(false)
     }
