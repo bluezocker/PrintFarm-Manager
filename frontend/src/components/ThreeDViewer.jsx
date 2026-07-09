@@ -67,14 +67,37 @@ function parseSTL(data) {
 }
 
 // Extrahiert das Model aus einer 3MF-Datei (ZIP mit .model XML drin)
-async function extract3mfModel(arrayBuffer) {
-  // Wir laden JSZip dynamisch von CDN (klein, kein npm-Dependency nötig für Vite)
-  // Alternative: Ohne JSZip parsen. Wir versuchen einen minimalen ZIP-Parser.
+// Entpackt eine einzelne Datei aus dem 3MF-ZIP.
+// method 0 = stored, method 8 = deflate
+async function inflateEntry(arrayBuffer, entry) {
+  const compressed = new Uint8Array(arrayBuffer, entry.dataOffset, entry.compressedSize)
+  if (entry.method === 0) {
+    return compressed
+  }
+  if (entry.method === 8) {
+    const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream('deflate-raw'))
+    const chunks = []
+    const reader = stream.getReader()
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      chunks.push(value)
+    }
+    const total = chunks.reduce((s, c) => s + c.length, 0)
+    const out = new Uint8Array(total)
+    let off = 0
+    for (const c of chunks) { out.set(c, off); off += c.length }
+    return out
+  }
+  throw new Error(`Unbekannte ZIP-Kompression: ${entry.method}`)
+}
 
+// Liest das ZIP-Verzeichnis und gibt alle Einträge mit ihren Header-Infos zurück.
+function readZipEntries(arrayBuffer) {
   const view = new DataView(arrayBuffer)
-  const files = []
+  const entries = []
 
-  // ZIP Central Directory suchen (End of Central Directory Record)
+  // End Of Central Directory Record suchen
   let eocdOffset = -1
   const maxSearch = Math.min(arrayBuffer.byteLength, 65536)
   for (let i = arrayBuffer.byteLength - 22; i >= arrayBuffer.byteLength - maxSearch; i--) {
@@ -88,7 +111,6 @@ async function extract3mfModel(arrayBuffer) {
   const numEntries = view.getUint16(eocdOffset + 10, true)
   const cdOffset = view.getUint32(eocdOffset + 16, true)
 
-  // Zentrales Verzeichnis durchgehen
   let cursor = cdOffset
   for (let i = 0; i < numEntries; i++) {
     if (view.getUint32(cursor, true) !== 0x02014b50) break
@@ -101,81 +123,125 @@ async function extract3mfModel(arrayBuffer) {
     const localHeaderOffset = view.getUint32(cursor + 42, true)
     const nameBytes = new Uint8Array(arrayBuffer, cursor + 46, fileNameLen)
     const name = new TextDecoder().decode(nameBytes)
-    files.push({ name, method, compressedSize, uncompressedSize, localHeaderOffset })
+
+    // Local Header lesen um echten Daten-Offset zu bestimmen
+    const lh = localHeaderOffset
+    if (view.getUint32(lh, true) === 0x04034b50) {
+      const lhFileNameLen = view.getUint16(lh + 26, true)
+      const lhExtraLen = view.getUint16(lh + 28, true)
+      const dataOffset = lh + 30 + lhFileNameLen + lhExtraLen
+      entries.push({ name, method, compressedSize, uncompressedSize, dataOffset })
+    }
     cursor += 46 + fileNameLen + extraLen + commentLen
   }
-
-  // .model Datei finden
-  const modelFile = files.find((f) => f.name.toLowerCase().endsWith('.model') && f.name.toLowerCase().includes('3d'))
-  if (!modelFile) throw new Error('Keine .model-Datei in 3MF gefunden')
-
-  // Local file header lesen um Datenoffset zu bestimmen
-  const lh = modelFile.localHeaderOffset
-  if (view.getUint32(lh, true) !== 0x04034b50) throw new Error('Kaputter Local Header')
-  const lhFileNameLen = view.getUint16(lh + 26, true)
-  const lhExtraLen = view.getUint16(lh + 28, true)
-  const dataOffset = lh + 30 + lhFileNameLen + lhExtraLen
-
-  const compressed = new Uint8Array(arrayBuffer, dataOffset, modelFile.compressedSize)
-  let decompressed
-  if (modelFile.method === 0) {
-    decompressed = compressed
-  } else if (modelFile.method === 8) {
-    // Deflate mit DecompressionStream (nativ in modernen Browsern)
-    const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream('deflate-raw'))
-    const chunks = []
-    const reader = stream.getReader()
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      chunks.push(value)
-    }
-    const total = chunks.reduce((s, c) => s + c.length, 0)
-    decompressed = new Uint8Array(total)
-    let off = 0
-    for (const c of chunks) { decompressed.set(c, off); off += c.length }
-  } else {
-    throw new Error(`Unbekannte ZIP-Kompression: ${modelFile.method}`)
-  }
-
-  return new TextDecoder().decode(decompressed)
+  return entries
 }
 
-// Parst 3MF XML -> BufferGeometry
+// Findet ALLE .model-Dateien im 3MF und entpackt sie.
+// Bambu-Slicer legt Objekte oft in separate Dateien unter 3D/Objects/ ab.
+async function extract3mfModels(arrayBuffer) {
+  const entries = readZipEntries(arrayBuffer)
+  const modelEntries = entries.filter(e => e.name.toLowerCase().endsWith('.model'))
+  if (modelEntries.length === 0) {
+    throw new Error('Keine .model-Datei in 3MF gefunden')
+  }
+
+  // Root-Model zuerst (3D/3dmodel.model), dann alles andere
+  modelEntries.sort((a, b) => {
+    const aRoot = /3d\/3dmodel\.model$/i.test(a.name) ? 0 : 1
+    const bRoot = /3d\/3dmodel\.model$/i.test(b.name) ? 0 : 1
+    return aRoot - bRoot
+  })
+
+  const xmls = []
+  for (const entry of modelEntries) {
+    try {
+      const bytes = await inflateEntry(arrayBuffer, entry)
+      xmls.push({ name: entry.name, xml: new TextDecoder().decode(bytes) })
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn(`3MF: Kann ${entry.name} nicht entpacken:`, e)
+    }
+  }
+  return xmls
+}
+
+// Parst 3MF-XML zu einer BufferGeometry.
+// Namespace-blind (nutzt getElementsByTagName statt querySelector),
+// damit auch der Bambu-Namespace erkannt wird.
 function parse3mfXml(xml) {
   const parser = new DOMParser()
   const doc = parser.parseFromString(xml, 'text/xml')
-  const meshes = doc.querySelectorAll('mesh')
-  if (!meshes.length) throw new Error('Kein Mesh in 3MF gefunden')
+
+  // Parse-Fehler?
+  const parseErr = doc.getElementsByTagName('parsererror')
+  if (parseErr.length) {
+    throw new Error('3MF-XML konnte nicht geparst werden')
+  }
+
+  // Namespace-blind: getElementsByTagName ignoriert Prefixes
+  const meshes = doc.getElementsByTagName('mesh')
+  if (!meshes.length) return null
 
   const positions = []
   const indices = []
 
   for (const mesh of meshes) {
-    const verts = mesh.querySelectorAll('vertex')
+    const verticesEl = mesh.getElementsByTagName('vertices')[0]
+    const trianglesEl = mesh.getElementsByTagName('triangles')[0]
+    if (!verticesEl || !trianglesEl) continue
+
+    const verts = verticesEl.getElementsByTagName('vertex')
     const startIdx = positions.length / 3
     for (const v of verts) {
       positions.push(
-        parseFloat(v.getAttribute('x')),
-        parseFloat(v.getAttribute('y')),
-        parseFloat(v.getAttribute('z')),
+        parseFloat(v.getAttribute('x')) || 0,
+        parseFloat(v.getAttribute('y')) || 0,
+        parseFloat(v.getAttribute('z')) || 0,
       )
     }
-    const triangles = mesh.querySelectorAll('triangle')
-    for (const t of triangles) {
+    const tris = trianglesEl.getElementsByTagName('triangle')
+    for (const t of tris) {
       indices.push(
-        startIdx + parseInt(t.getAttribute('v1')),
-        startIdx + parseInt(t.getAttribute('v2')),
-        startIdx + parseInt(t.getAttribute('v3')),
+        startIdx + parseInt(t.getAttribute('v1'), 10),
+        startIdx + parseInt(t.getAttribute('v2'), 10),
+        startIdx + parseInt(t.getAttribute('v3'), 10),
       )
     }
   }
+
+  if (positions.length === 0 || indices.length === 0) return null
 
   const geometry = new THREE.BufferGeometry()
   geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3))
   geometry.setIndex(indices)
   geometry.computeVertexNormals()
   return geometry
+}
+
+// Sucht in allen .model-Dateien nach dem ersten mit tatsächlichen Meshes.
+async function parseFirst3mfWithMesh(arrayBuffer) {
+  const xmls = await extract3mfModels(arrayBuffer)
+  const tried = []
+  for (const { name, xml } of xmls) {
+    try {
+      const geom = parse3mfXml(xml)
+      if (geom) {
+        // eslint-disable-next-line no-console
+        console.log(`3MF: Meshes gefunden in ${name}`)
+        return geom
+      }
+      tried.push(name)
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn(`3MF: Parse-Fehler in ${name}:`, e)
+      tried.push(name)
+    }
+  }
+  throw new Error(
+    `Kein Mesh in 3MF gefunden. Geprüfte Dateien: ${tried.join(', ') || '—'}. ` +
+    `Möglicherweise verwendet die Datei ein Format, das noch nicht unterstützt wird.`
+  )
 }
 
 /**
@@ -327,8 +393,7 @@ export default function ThreeDViewer({ fileId, fileType, onClose, filename }) {
           if (fileType === 'stl') {
             geometry = parseSTL(r.data)
           } else if (fileType === '3mf') {
-            const xml = await extract3mfModel(r.data)
-            geometry = parse3mfXml(xml)
+            geometry = await parseFirst3mfWithMesh(r.data)
           } else {
             throw new Error(`Dateityp ${fileType} nicht unterstützt für 3D-Vorschau`)
           }
