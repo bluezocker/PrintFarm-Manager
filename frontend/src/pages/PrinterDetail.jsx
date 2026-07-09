@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom'
 import {
   ArrowLeft, Plus, Wrench, RefreshCw, Camera, Mail,
   Lightbulb, Home, Gauge, Wifi, Fan, Play, Pause, Square,
-  Package, Clock as ClockIcon, Layers,
+  Package, Clock as ClockIcon, Layers, Power, Zap,
 } from 'lucide-react'
 import api from '../services/api'
 import Modal from '../components/Modal'
@@ -361,6 +361,30 @@ export default function PrinterDetail() {
                   >
                     <Square className="w-4 h-4" /> Stoppen
                   </button>
+                )}
+
+                {/* Manual Power - Tuya-Steckdose */}
+                {printer.tuya_device_id && (
+                  <>
+                    <button
+                      onClick={() => doControl('power/on')}
+                      disabled={controlBusy}
+                      className="btn-secondary text-sm text-green-600 flex items-center gap-1 disabled:opacity-50"
+                      title="Steckdose einschalten"
+                    >
+                      <Zap className="w-4 h-4" /> Power An
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (confirm('Steckdose wirklich ausschalten? (Drucker verliert Strom!)')) doControl('power/off')
+                      }}
+                      disabled={controlBusy}
+                      className="btn-secondary text-sm text-orange-600 flex items-center gap-1 disabled:opacity-50"
+                      title="Steckdose ausschalten"
+                    >
+                      <Power className="w-4 h-4" /> Power Aus
+                    </button>
+                  </>
                 )}
               </div>
             </div>

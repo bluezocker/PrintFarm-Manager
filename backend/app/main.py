@@ -18,6 +18,7 @@ from app.api import (
 )
 from app.services.notifier import start_notifier, stop_notifier
 from app.services.backup_service import start_auto_backup, stop_auto_backup
+from app.services.scheduler import start_scheduler, stop_scheduler
 
 logging.basicConfig(
     level=logging.INFO,
@@ -98,8 +99,10 @@ async def lifespan(app: FastAPI):
     initialize()
     start_notifier()
     start_auto_backup()
+    start_scheduler()
     yield
     # Cleanup
+    stop_scheduler()
     stop_auto_backup()
     stop_notifier()
     camera_manager.stop_all()

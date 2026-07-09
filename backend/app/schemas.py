@@ -105,6 +105,11 @@ class PrinterBase(BaseModel):
     power_price_kwh: float = 0.30
     avg_power_w: float = 120.0
     margin_percent: float = 20.0
+    # Auto Power
+    auto_power_enabled: bool = False
+    power_on_lead_minutes: int = 5
+    power_off_cooldown_minutes: int = 15
+    power_off_bed_temp: float = 40.0
 
 
 class PrinterCreate(PrinterBase):
@@ -130,6 +135,10 @@ class PrinterUpdate(BaseModel):
     power_price_kwh: Optional[float] = None
     avg_power_w: Optional[float] = None
     margin_percent: Optional[float] = None
+    auto_power_enabled: Optional[bool] = None
+    power_on_lead_minutes: Optional[int] = None
+    power_off_cooldown_minutes: Optional[int] = None
+    power_off_bed_temp: Optional[float] = None
 
 
 class PrinterRead(PrinterBase):
@@ -291,6 +300,7 @@ class PrintJobBase(BaseModel):
     print_file_name: Optional[str] = None  # Dateiname für Auto-Matching mit MQTT
     library_file_id: Optional[int] = None  # Verknüpfung zum Archiv
     project_id: Optional[int] = None       # Zugehöriges Projekt
+    scheduled_start_at: Optional[datetime] = None  # Zeitgesteuerter Auto-Start
     notes: Optional[str] = None
 
 

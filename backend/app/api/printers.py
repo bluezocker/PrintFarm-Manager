@@ -270,3 +270,31 @@ def move_axis(
     if not client:
         raise HTTPException(400, "Drucker nicht verbunden")
     return {"success": client.move_axis(axis, distance)}
+
+
+# ==== Manuelle Power-Steuerung (Tuya) ====
+
+@router.post("/{printer_id}/power/on")
+def power_on_printer(
+    printer_id: int,
+    _: User = Depends(get_current_user),
+):
+    """Manueller Power-On der Tuya-Steckdose des Druckers."""
+    from app.services.scheduler import manual_power_on
+    result = manual_power_on(printer_id)
+    if not result.get("success"):
+        raise HTTPException(400, result.get("error") or "Power-On fehlgeschlagen")
+    return result
+
+
+@router.post("/{printer_id}/power/off")
+def power_off_printer(
+    printer_id: int,
+    _: User = Depends(get_current_user),
+):
+    """Manueller Power-Off der Tuya-Steckdose des Druckers."""
+    from app.services.scheduler import manual_power_off
+    result = manual_power_off(printer_id)
+    if not result.get("success"):
+        raise HTTPException(400, result.get("error") or "Power-Off fehlgeschlagen")
+    return result

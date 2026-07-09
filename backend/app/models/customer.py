@@ -83,6 +83,10 @@ class PrintJob(Base):
     # Projekt-Zuordnung
     project_id = Column(Integer, ForeignKey("projects.id", ondelete="SET NULL"), index=True)
 
+    # Zeitgesteuerter Start
+    scheduled_start_at = Column(DateTime(timezone=True))    # Wann soll der Auftrag automatisch starten
+    scheduled_processed = Column(Boolean, default=False)    # Wurde der Auto-Start bereits verarbeitet
+
     notes = Column(Text)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())

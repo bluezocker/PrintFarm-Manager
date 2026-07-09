@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, Float, ForeignKey, Date
+from sqlalchemy import Column, Integer, String, Text, DateTime, Float, ForeignKey, Date, Boolean
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.core.database import Base
@@ -31,6 +31,12 @@ class Printer(Base):
 
     # Tuya Smart Plug für Stromverbrauch
     tuya_device_id = Column(String(120))       # Tuya Device ID der Steckdose
+
+    # Auto Power via Tuya-Steckdose
+    auto_power_enabled = Column(Boolean, default=False)   # Master-Switch für Auto-Power
+    power_on_lead_minutes = Column(Integer, default=5)    # Wie viele Minuten vor Druckstart einschalten
+    power_off_cooldown_minutes = Column(Integer, default=15)  # Wie viele Minuten nach Druckende warten
+    power_off_bed_temp = Column(Float, default=40.0)      # Zusätzliche Bedingung: Bett muss unter dieser Temp sein
 
     # Kalkulationsdaten
     hourly_rate = Column(Float, default=0.0)        # Maschinen-Stundensatz in €/h

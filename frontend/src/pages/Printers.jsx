@@ -11,6 +11,8 @@ const empty = {
   connection_mode: 'lan',
   tuya_device_id: '', notes: '',
   hourly_rate: 0, power_price_kwh: 0.30, avg_power_w: 120, margin_percent: 20,
+  auto_power_enabled: false, power_on_lead_minutes: 5,
+  power_off_cooldown_minutes: 15, power_off_bed_temp: 40.0,
 }
 
 export default function Printers() {
@@ -277,6 +279,52 @@ export default function Printers() {
             <h3 className="font-medium mb-3 text-sm">Tuya Smart-Steckdose</h3>
             <label className="label">Tuya Device ID</label>
             <input className="input" placeholder="bf12345abcdef" value={form.tuya_device_id} onChange={(e) => setForm({ ...form, tuya_device_id: e.target.value })} />
+
+            {form.tuya_device_id && (
+              <div className="mt-4 space-y-3 bg-purple-50/40 border border-purple-100 rounded p-3">
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={!!form.auto_power_enabled}
+                    onChange={(e) => setForm({ ...form, auto_power_enabled: e.target.checked })}
+                  />
+                  <div className="text-sm">
+                    <div className="font-medium">Auto Power aktivieren</div>
+                    <div className="text-xs text-gray-500">
+                      Steckdose wird vor geplanten Drucken eingeschaltet
+                      und nach Abschluss automatisch ausgeschaltet.
+                    </div>
+                  </div>
+                </label>
+
+                {form.auto_power_enabled && (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pl-6">
+                    <div>
+                      <label className="label text-xs">Vorlauf (Minuten)</label>
+                      <input type="number" min="0" max="60" className="input text-sm"
+                        value={form.power_on_lead_minutes || 5}
+                        onChange={(e) => setForm({ ...form, power_on_lead_minutes: parseInt(e.target.value) || 0 })} />
+                      <p className="text-[10px] text-gray-500 mt-0.5">Wann vor Start einschalten</p>
+                    </div>
+                    <div>
+                      <label className="label text-xs">Nachlauf (Minuten)</label>
+                      <input type="number" min="0" max="120" className="input text-sm"
+                        value={form.power_off_cooldown_minutes || 15}
+                        onChange={(e) => setForm({ ...form, power_off_cooldown_minutes: parseInt(e.target.value) || 0 })} />
+                      <p className="text-[10px] text-gray-500 mt-0.5">Warte-Zeit nach Ende</p>
+                    </div>
+                    <div>
+                      <label className="label text-xs">Bett-Temp max (°C)</label>
+                      <input type="number" min="20" max="80" step="1" className="input text-sm"
+                        value={form.power_off_bed_temp || 40}
+                        onChange={(e) => setForm({ ...form, power_off_bed_temp: parseFloat(e.target.value) || 40 })} />
+                      <p className="text-[10px] text-gray-500 mt-0.5">Erst wenn abgekühlt</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="border-t pt-4">

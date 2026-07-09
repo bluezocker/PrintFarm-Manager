@@ -18,7 +18,7 @@ const empty = {
   order_date: new Date().toISOString().slice(0, 10), due_date: '',
   quantity: 1, estimated_hours: '', estimated_material_g: '',
   price_net: 0, price_gross: 0, vat_rate: 19, notes: '',
-  print_file_name: '',
+  print_file_name: '', scheduled_start_at: '',
 }
 
 export default function Jobs() {
@@ -103,6 +103,7 @@ export default function Jobs() {
       estimated_material_g: j.estimated_material_g ?? '',
       due_date: j.due_date || '',
       order_date: j.order_date || '',
+      scheduled_start_at: j.scheduled_start_at ? j.scheduled_start_at.slice(0, 16) : '',
     })
     // Platten aus DB rekonstruieren
     if (j.plates && j.plates.length > 0) {
@@ -288,6 +289,9 @@ export default function Jobs() {
     })
     if (!payload.due_date) payload.due_date = null
     if (!payload.order_date) payload.order_date = null
+    // scheduled_start_at: HTML datetime-local -> ISO (mit "T", ohne Timezone)
+    // Backend akzeptiert das direkt; leerer String = null
+    if (!payload.scheduled_start_at) payload.scheduled_start_at = null
     payload.customer_id = Number(payload.customer_id)
     payload.quantity = Number(payload.quantity)
     payload.price_net = Number(payload.price_net) || 0
@@ -438,7 +442,14 @@ export default function Jobs() {
                   </td>
                   <td className="p-3 text-gray-600">{customerName(j.customer)}</td>
                   <td className="p-3">{statusBadge(j.status)}</td>
-                  <td className="p-3 text-gray-600">{j.due_date || '—'}</td>
+                  <td className="p-3 text-gray-600">
+                    {j.due_date || '—'}
+                    {j.scheduled_start_at && !j.scheduled_processed && (
+                      <div className="text-[10px] text-primary-600 mt-0.5 flex items-center gap-0.5" title="Zeitgesteuerter Start">
+                        ⏰ {new Date(j.scheduled_start_at).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                    )}
+                  </td>
                   <td className="p-3 text-right">
                     {j.calculated_price_net != null ? (
                       <div>
@@ -560,6 +571,22 @@ export default function Jobs() {
               <label className="label">Liefertermin</label>
               <input type="date" className="input" value={form.due_date}
                 onChange={(e) => setForm({ ...form, due_date: e.target.value })} />
+            </div>
+            <div className="col-span-2 sm:col-span-1">
+              <label className="label flex items-center gap-1">
+                ⏰ Zeitgesteuerter Start
+                <span className="text-xs text-gray-400 font-normal">(optional)</span>
+              </label>
+              <input
+                type="datetime-local"
+                className="input"
+                value={form.scheduled_start_at || ''}
+                onChange={(e) => setForm({ ...form, scheduled_start_at: e.target.value })}
+              />
+              <p className="text-[10px] text-gray-500 mt-0.5">
+                Auftrag wird automatisch an Position 1 der Warteschlange gesetzt.
+                Benötigt zugewiesenen Queue-Drucker.
+              </p>
             </div>
             <div>
               <label className="label">Geschätzte Stunden</label>
