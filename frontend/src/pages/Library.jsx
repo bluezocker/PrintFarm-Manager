@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   Upload, Search, Trash2, Download, Edit2, X, Clock, Package,
-  FileText, Grid, List as ListIcon, RefreshCw, Box, FolderKanban,
+  FileText, Grid, List as ListIcon, RefreshCw, Box, FolderKanban, Printer,
 } from 'lucide-react'
 import api from '../services/api'
 import Modal from '../components/Modal'
@@ -83,6 +83,7 @@ export default function Library() {
   const [regenerating, setRegenerating] = useState(null)
   const [viewer3d, setViewer3d] = useState(null)  // {fileId, fileType, filename}
   const [duplicateInfo, setDuplicateInfo] = useState(null)  // Für Duplikat-Dialog
+  const [printDialog, setPrintDialog] = useState(null)  // Für Direktdruck-Dialog: {file}
 
   const load = async () => {
     setLoading(true)
@@ -248,6 +249,7 @@ export default function Library() {
           onDownload={download}
           onRegenerateThumbnail={regenerateThumbnail}
           on3DView={(f) => setViewer3d({ fileId: f.id, fileType: f.file_type, filename: f.display_name || f.filename })}
+          onPrint={(f) => setPrintDialog({ file: f })}
           regenerating={regenerating}
         />
       ) : (
@@ -259,6 +261,7 @@ export default function Library() {
           onDownload={download}
           onRegenerateThumbnail={regenerateThumbnail}
           on3DView={(f) => setViewer3d({ fileId: f.id, fileType: f.file_type, filename: f.display_name || f.filename })}
+          onPrint={(f) => setPrintDialog({ file: f })}
           regenerating={regenerating}
         />
       )}
@@ -317,6 +320,17 @@ export default function Library() {
           }}
         />
       )}
+
+      {printDialog && (
+        <PrintDialog
+          file={printDialog.file}
+          onClose={() => setPrintDialog(null)}
+          onSuccess={() => {
+            setPrintDialog(null)
+            load()
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -324,7 +338,7 @@ export default function Library() {
 // =========================================================================
 // Grid View
 // =========================================================================
-function GridView({ files, projects, onEdit, onDelete, onDownload, onRegenerateThumbnail, on3DView, regenerating }) {
+function GridView({ files, projects, onEdit, onDelete, onDownload, onRegenerateThumbnail, on3DView, onPrint, regenerating }) {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
       {files.map((file) => (
@@ -381,6 +395,12 @@ function GridView({ files, projects, onEdit, onDelete, onDownload, onRegenerateT
               </div>
             )}
             <div className="flex justify-between items-center gap-1 mt-2 pt-2 border-t">
+              {file.file_type === '3mf' && (
+                <button onClick={() => onPrint(file)} className="text-gray-400 hover:text-primary-600 p-1"
+                  title="Direkt drucken">
+                  <Printer className="w-4 h-4" />
+                </button>
+              )}
               {(file.file_type === '3mf' || file.file_type === 'stl') && (
                 <button onClick={() => on3DView(file)} className="text-gray-400 hover:text-primary-600 p-1"
                   title="3D-Vorschau">
@@ -410,7 +430,7 @@ function GridView({ files, projects, onEdit, onDelete, onDownload, onRegenerateT
 // =========================================================================
 // List View
 // =========================================================================
-function ListView({ files, projects, onEdit, onDelete, onDownload, onRegenerateThumbnail, on3DView, regenerating }) {
+function ListView({ files, projects, onEdit, onDelete, onDownload, onRegenerateThumbnail, on3DView, onPrint, regenerating }) {
   return (
     <div className="card !p-0 overflow-x-auto">
       <table className="w-full text-sm">
@@ -467,6 +487,11 @@ function ListView({ files, projects, onEdit, onDelete, onDownload, onRegenerateT
                     title="Thumbnail neu extrahieren"
                   >
                     <RefreshCw className={`w-4 h-4 inline ${regenerating === file.id ? 'animate-spin' : ''}`} />
+                  </button>
+                )}
+                {file.file_type === '3mf' && (
+                  <button onClick={() => onPrint(file)} className="text-gray-400 hover:text-primary-600 mr-2" title="Direkt drucken">
+                    <Printer className="w-4 h-4 inline" />
                   </button>
                 )}
                 {(file.file_type === '3mf' || file.file_type === 'stl') && (
@@ -818,6 +843,158 @@ function DuplicateDialog({ duplicate, formData, onClose, onForce }) {
           <button onClick={onForce} className="btn-secondary text-sm">
             Trotzdem hochladen (als zusätzliches Duplikat)
           </button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
+
+// =========================================================================
+// Direktdruck-Dialog
+// =========================================================================
+function PrintDialog({ file, onClose, onSuccess }) {
+  const [printers, setPrinters] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [selectedPrinter, setSelectedPrinter] = useState(null)
+  const [options, setOptions] = useState({
+    plate: 1,
+    use_ams: false,
+    bed_leveling: true,
+    flow_cali: false,
+    layer_inspect: true,
+    timelapse: false,
+  })
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    api.get('/printers').then((r) => {
+      // Nur Bambu-Drucker mit LAN-Zugangsdaten
+      const eligible = r.data.filter((p) =>
+        p.brand === 'bambu' && p.bambu_ip && p.bambu_access_code
+      )
+      setPrinters(eligible)
+      if (eligible.length === 1) setSelectedPrinter(eligible[0])
+      setLoading(false)
+    })
+  }, [])
+
+  const startPrint = async () => {
+    if (!selectedPrinter) {
+      setError('Bitte einen Drucker auswählen')
+      return
+    }
+    setSending(true)
+    setError('')
+    try {
+      const r = await api.post(`/library/${file.id}/print/${selectedPrinter.id}`, options)
+      alert(r.data?.message || 'Druck gestartet!')
+      onSuccess()
+    } catch (e) {
+      setError(e.response?.data?.detail || 'Druck-Start fehlgeschlagen')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <Modal open onClose={onClose} title="Direkt drucken" size="md">
+      <div className="space-y-4">
+        <div className="bg-gray-50 rounded p-3 text-sm">
+          <div className="font-medium mb-1">{file.display_name || file.filename}</div>
+          <div className="text-xs text-gray-500">
+            {file.file_type?.toUpperCase()} · {file.estimated_time_minutes ? `${Math.floor(file.estimated_time_minutes / 60)}h ${file.estimated_time_minutes % 60}min` : '—'}
+            {file.estimated_material_g ? ` · ${Math.round(file.estimated_material_g)}g` : ''}
+          </div>
+        </div>
+
+        {loading ? (
+          <p className="text-gray-500">Lade Drucker...</p>
+        ) : printers.length === 0 ? (
+          <div className="bg-yellow-50 border border-yellow-200 rounded p-3 text-sm">
+            <p className="font-medium mb-1">⚠️ Kein geeigneter Drucker</p>
+            <p className="text-yellow-800">
+              Direktdruck benötigt einen Bambu-Drucker mit gesetzter IP und
+              Access Code (LAN-Modus). Cloud-Modus wird aktuell nicht unterstützt.
+            </p>
+          </div>
+        ) : (
+          <>
+            <div>
+              <label className="label">Drucker</label>
+              <div className="space-y-1">
+                {printers.map((p) => (
+                  <label key={p.id} className={`flex items-center gap-2 p-2 border rounded cursor-pointer hover:bg-gray-50 ${selectedPrinter?.id === p.id ? 'border-primary-400 bg-primary-50' : ''}`}>
+                    <input
+                      type="radio"
+                      name="printer"
+                      checked={selectedPrinter?.id === p.id}
+                      onChange={() => setSelectedPrinter(p)}
+                    />
+                    <div className="flex-1">
+                      <div className="font-medium text-sm">{p.name}</div>
+                      <div className="text-xs text-gray-500">{p.model || 'Bambu Lab'} · {p.bambu_ip}</div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-gray-50 rounded p-3 space-y-2">
+              <div className="text-xs font-medium text-gray-700 uppercase tracking-wide mb-1">Druck-Optionen</div>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={options.bed_leveling}
+                  onChange={(e) => setOptions({ ...options, bed_leveling: e.target.checked })} />
+                Bett-Levelling vor Druck
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={options.use_ams}
+                  onChange={(e) => setOptions({ ...options, use_ams: e.target.checked })} />
+                AMS verwenden
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={options.layer_inspect}
+                  onChange={(e) => setOptions({ ...options, layer_inspect: e.target.checked })} />
+                Layer-Inspektion (X1)
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={options.timelapse}
+                  onChange={(e) => setOptions({ ...options, timelapse: e.target.checked })} />
+                Timelapse aufnehmen
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={options.flow_cali}
+                  onChange={(e) => setOptions({ ...options, flow_cali: e.target.checked })} />
+                Flow-Kalibrierung (dauert extra)
+              </label>
+            </div>
+
+            <div>
+              <label className="label">Plate (bei mehreren Platten im 3MF)</label>
+              <input type="number" min="1" max="16" className="input"
+                value={options.plate}
+                onChange={(e) => setOptions({ ...options, plate: parseInt(e.target.value) || 1 })} />
+              <p className="text-xs text-gray-500 mt-0.5">Standard: 1 (erste Plate)</p>
+            </div>
+          </>
+        )}
+
+        {error && (
+          <div className="bg-red-50 border border-red-200 text-red-700 text-sm px-3 py-2 rounded">
+            {error}
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2 pt-3 border-t">
+          <button onClick={onClose} className="btn-secondary">Abbrechen</button>
+          {printers.length > 0 && (
+            <button onClick={startPrint} disabled={sending || !selectedPrinter}
+              className="btn-primary disabled:opacity-50 flex items-center gap-2">
+              <Printer className="w-4 h-4" />
+              {sending ? 'Sende...' : 'Druck starten'}
+            </button>
+          )}
         </div>
       </div>
     </Modal>

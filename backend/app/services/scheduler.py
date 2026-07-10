@@ -111,6 +111,84 @@ def _get_printer_status(printer_id: int) -> Optional[str]:
         return None
 
 
+def _try_start_print(db, job) -> bool:
+    """Versucht einen scheduled Job direkt auf dem Drucker zu starten.
+
+    Voraussetzungen:
+    - job.queue_printer_id gesetzt
+    - job.library_file_id gesetzt (verweist auf 3MF im Archiv)
+    - Drucker im LAN-Modus mit bambu_ip + bambu_access_code
+    - Drucker aktuell idle (nicht schon druckend)
+
+    Returns:
+        True wenn Druck gestartet, False sonst.
+    """
+    if not job.queue_printer_id or not job.library_file_id:
+        return False
+
+    try:
+        from app.models import Printer, LibraryFile
+        from pathlib import Path
+        from app.services.bambu_ftp import upload_to_bambu
+        from app.services.bambu_service import bambu_manager
+
+        p = db.query(Printer).filter(Printer.id == job.queue_printer_id).first()
+        if not p or not p.bambu_ip or not p.bambu_access_code:
+            logger.info(f"Scheduled: Job {job.id} - Drucker hat keine LAN-Zugangsdaten, kein Auto-Start")
+            return False
+
+        # Drucker darf nicht schon drucken
+        status = _get_printer_status(job.queue_printer_id)
+        if status in ("printing", "paused", "prepare"):
+            logger.info(f"Scheduled: Job {job.id} - Drucker {p.name} beschäftigt ({status}), kein Start")
+            return False
+
+        f = db.query(LibraryFile).filter(LibraryFile.id == job.library_file_id).first()
+        if not f or f.file_type != "3mf":
+            logger.warning(f"Scheduled: Job {job.id} - keine 3MF-Datei verknüpft")
+            return False
+
+        stored = Path(f.stored_path)
+        if not stored.exists():
+            logger.error(f"Scheduled: Job {job.id} - Datei nicht auf Server: {f.stored_path}")
+            return False
+
+        # 1. FTP-Upload
+        remote_name = upload_to_bambu(
+            host=p.bambu_ip,
+            access_code=p.bambu_access_code,
+            local_path=str(stored),
+            remote_filename=f.filename,
+        )
+
+        # 2. Print-Command
+        client = bambu_manager.get(job.queue_printer_id)
+        if not client:
+            logger.warning(f"Scheduled: Job {job.id} - MQTT-Verbindung zu {p.name} nicht aktiv")
+            return False
+
+        ok = client.send_print_job(
+            filename=remote_name,
+            plate=1,
+            use_ams=False,  # Konservativ: ohne AMS als Default
+            bed_leveling=True,
+            job_name=f.display_name or job.title or f.filename,
+        )
+        if ok:
+            # Times printed hochzählen
+            f.times_printed = (f.times_printed or 0) + 1
+            f.last_used_date = _now_utc()
+            logger.info(f"Scheduled: Job {job.id} '{job.title}' direktgedruckt auf {p.name}")
+            return True
+        else:
+            logger.warning(f"Scheduled: Job {job.id} - MQTT-Command fehlgeschlagen")
+            return False
+
+    except Exception as e:
+        logger.error(f"Scheduled: Direktdruck fehlgeschlagen für Job {job.id}: {e}", exc_info=True)
+        return False
+
+
 def _process_scheduled_jobs(db):
     """Findet fällige geplante Aufträge und verarbeitet sie."""
     now = _now_utc()
@@ -125,7 +203,10 @@ def _process_scheduled_jobs(db):
 
     for job in due_jobs:
         try:
-            # An Position 1 der Queue setzen (falls Drucker zugewiesen)
+            # 1. Versuchen tatsächlich zu starten (wenn library_file_id + LAN)
+            started_directly = _try_start_print(db, job)
+
+            # 2. An Position 1 der Queue setzen (falls Drucker zugewiesen)
             if job.queue_printer_id:
                 # Existierende Queue-Positionen ab 1 alle um eins hoch
                 db.query(PrintJob).filter(
@@ -134,17 +215,21 @@ def _process_scheduled_jobs(db):
                     PrintJob.id != job.id,
                 ).update({PrintJob.queue_position: PrintJob.queue_position + 1})
                 job.queue_position = 1
-                logger.info(f"Scheduled: Job {job.id} '{job.title}' an Queue-Position 1 gesetzt (Drucker {job.queue_printer_id})")
+                if not started_directly:
+                    logger.info(f"Scheduled: Job {job.id} '{job.title}' an Queue-Position 1 (Drucker {job.queue_printer_id})")
             else:
                 logger.info(f"Scheduled: Job {job.id} '{job.title}' fällig, aber kein Drucker zugewiesen")
 
             job.scheduled_processed = True
 
-            # Kunde informieren (falls Kunde + Mail vorhanden)
+            # 3. Kunde informieren (falls Kunde + Mail vorhanden)
             try:
                 from app.services.notifier import notify_customer_on_status_change
-                # Status auf "in_progress" wenn er noch "new" war
-                if job.status == "new":
+                # Status: direkt zu printing wenn Auto-Start klappte, sonst in_progress
+                if started_directly:
+                    job.status = "printing"
+                    notify_customer_on_status_change(db, job, "printing")
+                elif job.status == "new":
                     job.status = "in_progress"
                     notify_customer_on_status_change(db, job, "in_progress")
             except Exception as e:

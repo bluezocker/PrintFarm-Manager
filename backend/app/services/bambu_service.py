@@ -495,6 +495,65 @@ class BambuPrinterClient:
             }
         })
 
+    def send_print_job(
+        self,
+        filename: str,
+        plate: int = 1,
+        use_ams: bool = False,
+        ams_mapping: list = None,
+        bed_leveling: bool = True,
+        flow_cali: bool = False,
+        vibration_cali: bool = False,
+        layer_inspect: bool = True,
+        timelapse: bool = False,
+        job_name: str = None,
+    ):
+        """Startet einen Druck einer bereits hochgeladenen 3MF-Datei.
+
+        Die Datei muss vorher per FTP nach /model/<filename> hochgeladen werden.
+
+        Args:
+            filename: Nur der Dateiname (z.B. "meinmodel.3mf")
+            plate: Welche Plate im 3MF drucken (1-basiert)
+            use_ams: AMS verwenden?
+            ams_mapping: Liste welcher Filament-Slot zu welchem Farbindex kommt (z.B. [0,1,2,3])
+            bed_leveling: Bett-Leveling vor Druck
+            flow_cali: Flow-Kalibrierung vor Druck (bei P1 meist False)
+            vibration_cali: Vibrations-Kalibrierung (bei X1/P1 meist False)
+            layer_inspect: KI-Layerinspektion (X1 only)
+            timelapse: Timelapse aufnehmen
+            job_name: Optionaler Job-Name für Anzeige am Drucker
+        """
+        # Ohne AMS Slot 0 = external spool
+        if ams_mapping is None:
+            ams_mapping = [0] if not use_ams else [0, 1, 2, 3]
+
+        payload = {
+            "print": {
+                "sequence_id": "0",
+                "command": "project_file",
+                "param": f"Metadata/plate_{plate}.gcode",
+                "project_id": "0",
+                "profile_id": "0",
+                "task_id": "0",
+                "subtask_id": "0",
+                "subtask_name": job_name or filename,
+                "file": filename,
+                # url: leerer Host = SD-Karte des Druckers (nach FTP-Upload)
+                "url": f"ftp:///{filename}",
+                "md5": "",
+                "timelapse": timelapse,
+                "bed_type": "auto",
+                "bed_leveling": bed_leveling,
+                "flow_cali": flow_cali,
+                "vibration_cali": vibration_cali,
+                "layer_inspect": layer_inspect,
+                "ams_mapping": ams_mapping,
+                "use_ams": use_ams,
+            }
+        }
+        return self._publish(payload)
+
     def get_status_summary(self) -> dict:
         """Extrahiert die wichtigsten Felder aus den rohen MQTT-Daten."""
         with self._lock:

@@ -216,6 +216,24 @@ export default function Printers() {
                       value={form.bambu_serial}
                       onChange={(e) => setForm({ ...form, bambu_serial: e.target.value })} />
                   </div>
+                  {editing && form.bambu_ip && form.bambu_access_code && (
+                    <div className="col-span-2">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            const r = await api.post(`/library/test-ftp/${editing.id}`)
+                            alert(r.data?.message + (r.data?.file_count != null ? `\nDateien im /model: ${r.data.file_count}` : ''))
+                          } catch (e) {
+                            alert(e.response?.data?.detail || 'Test fehlgeschlagen')
+                          }
+                        }}
+                        className="btn-secondary text-xs"
+                      >
+                        📡 FTP-Verbindung testen (für Direktdruck)
+                      </button>
+                    </div>
+                  )}
                 </div>
               </>
             )}

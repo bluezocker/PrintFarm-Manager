@@ -462,3 +462,116 @@ def mark_used(
     f.last_used_date = datetime.utcnow()
     db.commit()
     return {"success": True, "times_printed": f.times_printed}
+
+
+# ==== Direktdruck: 3MF-Datei per FTP an Bambu senden und starten ====
+
+class PrintRequest(BaseModel):
+    plate: int = 1
+    use_ams: bool = False
+    ams_mapping: Optional[List[int]] = None
+    bed_leveling: bool = True
+    flow_cali: bool = False
+    vibration_cali: bool = False
+    layer_inspect: bool = True
+    timelapse: bool = False
+
+
+@router.post("/{file_id}/print/{printer_id}")
+def print_file_on_printer(
+    file_id: int,
+    printer_id: int,
+    req: PrintRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Lädt die 3MF-Datei per FTPS zum Drucker und startet den Druck.
+
+    Nur für Bambu-Drucker im LAN-Modus möglich (mit bambu_ip + bambu_access_code).
+    """
+    from app.models import Printer
+    from app.services.bambu_ftp import upload_to_bambu
+    from app.services.bambu_service import bambu_manager
+
+    f = db.query(LibraryFile).filter(LibraryFile.id == file_id).first()
+    if not f:
+        raise HTTPException(404, "Datei nicht gefunden")
+    if f.file_type != "3mf":
+        raise HTTPException(400, "Nur 3MF-Dateien können direkt gedruckt werden")
+
+    stored = Path(f.stored_path)
+    if not stored.exists():
+        raise HTTPException(404, "Original-Datei nicht auf Server")
+
+    p = db.query(Printer).filter(Printer.id == printer_id).first()
+    if not p:
+        raise HTTPException(404, "Drucker nicht gefunden")
+    if not p.bambu_ip or not p.bambu_access_code:
+        raise HTTPException(400, "Für Direktdruck werden IP und Access Code benötigt (LAN-Modus)")
+
+    # 1. Datei per FTP hochladen
+    try:
+        remote_name = upload_to_bambu(
+            host=p.bambu_ip,
+            access_code=p.bambu_access_code,
+            local_path=str(stored),
+            remote_filename=f.filename,
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(500, f"Datei nicht auffindbar: {e}")
+    except ConnectionError as e:
+        raise HTTPException(502, f"Bambu-Verbindung fehlgeschlagen: {e}")
+    except Exception as e:
+        raise HTTPException(500, f"FTP-Upload fehlgeschlagen: {e}")
+
+    # 2. MQTT-Print-Command senden
+    client = bambu_manager.get(printer_id)
+    if not client:
+        raise HTTPException(400, "MQTT-Verbindung zum Drucker nicht aktiv")
+
+    ok = client.send_print_job(
+        filename=remote_name,
+        plate=req.plate,
+        use_ams=req.use_ams,
+        ams_mapping=req.ams_mapping,
+        bed_leveling=req.bed_leveling,
+        flow_cali=req.flow_cali,
+        vibration_cali=req.vibration_cali,
+        layer_inspect=req.layer_inspect,
+        timelapse=req.timelapse,
+        job_name=f.display_name or f.filename,
+    )
+
+    if not ok:
+        raise HTTPException(500, "MQTT-Print-Command konnte nicht gesendet werden")
+
+    # 3. Nutzung tracken
+    f.times_printed = (f.times_printed or 0) + 1
+    f.last_used_date = datetime.utcnow()
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"Druck von '{remote_name}' auf {p.name} gestartet",
+        "filename": remote_name,
+    }
+
+
+@router.post("/test-ftp/{printer_id}")
+def test_ftp_connection(
+    printer_id: int,
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
+    """Testet die FTPS-Verbindung zu einem Bambu-Drucker."""
+    from app.models import Printer
+    from app.services.bambu_ftp import test_connection
+
+    p = db.query(Printer).filter(Printer.id == printer_id).first()
+    if not p:
+        raise HTTPException(404, "Drucker nicht gefunden")
+    if not p.bambu_ip or not p.bambu_access_code:
+        raise HTTPException(400, "IP und Access Code fehlen")
+
+    result = test_connection(p.bambu_ip, p.bambu_access_code)
+    return result
